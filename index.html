@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Designer Mode Booth</title>
+    <!-- Load MediaPipe scripts with error handling for the script tags themselves -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        body { margin: 0; background-color: #0d1117; font-family: sans-serif; overflow: hidden; height: 100vh; color: white; }
+        canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        
+        /* Controls */
+        #controls {
+            position: absolute; bottom: 20px; left: 20px; 
+            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 12px;
+            pointer-events: auto; min-width: 250px;
+        }
+        .control-row { display: flex; justify-content: space-between; margin-bottom: 8px; align-items: center; }
+        input[type=range] { width: 120px; }
+        label { font-size: 12px; color: #aaa; }
+        button { background: #333; color: white; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        button.active { background: #00ff88; color: black; border-color: #00ff88; }
+        
+        .part-nav { display: flex; gap: 5px; align-items: center; }
+        .part-nav button { padding: 2px 8px; font-size: 10px; }
+
+        /* Loading */
+        #loading { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            background: rgba(0,0,0,0.85); padding: 24px; border-radius: 16px; 
+            text-align: center; max-width: 80%;
+        }
+        .spinner {
+            width: 30px; height: 30px; border: 3px solid #555; border-top: 3px solid #00ff88; 
+            border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 10px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <video id="input_video" style="display:none" playsinline muted></video>
+    <canvas id="output_canvas"></canvas>
+    
+    <div id="ui-layer">
+        <div id="loading">
+            <div class="spinner"></div>
+            <div id="loading-text">Initializing...</div>
+        </div>
+        
+        <div id="controls">
+            <div class="control-row">
+                <span style="font-weight:bold; color:#00ff88">Designer Mode</span>
+                <button id="btn-debug" onclick="toggleDebug()">Debug: OFF</button>
+            </div>
+            <hr style="border-color: #444; opacity: 0.5">
+            <div id="prop-controls" style="opacity: 0.5; pointer-events: none;">
+                <div class="control-row">
+                    <div style="font-size: 11px; color:#fff"><span id="edit-name">None</span></div>
+                    <div class="part-nav" id="part-nav" style="display:none">
+                        <button onclick="changePart(-1)">&lt;</button>
+                        <span id="part-label" style="font-size:10px">1/1</span>
+                        <button onclick="changePart(1)">&gt;</button>
+                    </div>
+                </div>
+                
+                <div class="control-row">
+                    <label>Scale <span id="val-scale">1.0</span></label>
+                    <input type="range" min="0.1" max="5.0" step="0.1" id="in-scale" oninput="updateProp('scale', this.value)">
+                </div>
+                
+                <div class="control-row">
+                    <label>Offset Y <span id="val-offset">0</span></label>
+                    <input type="range" min="-300" max="300" step="5" id="in-offset" oninput="updateProp('offsetY', this.value)">
+                </div>
+
+                <!-- NEW: Rotation Slider -->
+                <div class="control-row">
+                    <label>Rotate <span id="val-rotation">0</span>°</label>
+                    <input type="range" min="-180" max="180" step="5" id="in-rotation" oninput="updateProp('rotation', this.value)">
+                </div>
+                
+                <div style="font-size: 10px; color: #888; margin-top:5px;">
+                    Tap face to select. Use &lt; &gt; to switch parts.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- ASSETS & CONFIG ---
+        
+        // Note: Parts are drawn in order. 
+        // Index 0 is drawn first (Background layer), Index 1 is drawn last (Foreground layer)
+        const FILTERS = [
+            {
+                id: 'santa',
+                parts: [
+                    // Beard first so it goes behind/under the hat if they overlap
+                    { type: 'image', id: 'santa_beard', src: 'https://i.imgur.com/sDafmKM.png', anchorIndex: 152, scale: 1.6, offsetY: 30, rotation: 0 },
+                    { type: 'image', id: 'santa_hat', src: 'https://i.imgur.com/xE8op0x.png', anchorIndex: 10, scale: 2.0, offsetY: -100, rotation: 0 }
+                ]
+            },
+            {
+                id: 'reindeer',
+                parts: [
+                    { type: 'image', id: 'antlers', src: 'https://i.imgur.com/CUThQ6s.png', anchorIndex: 10, scale: 2.5, offsetY: -80, rotation: 0 },
+                    { type: 'image', id: 'red_nose', src: 'https://i.imgur.com/LB5YQjz.png', anchorIndex: 1, scale: 0.6, offsetY: -10, rotation: 0 }
+                ]
+            },
+            {
+                id: 'snowman',
+                parts: [
+                    // Scarf goes behind to look like it's around the neck
+                    // Anchor 152 is Chin. Offset Y positive moves it DOWN.
+                    { type: 'image', id: 'scarf', src: 'https://i.imgur.com/9N9LTnb.png', anchorIndex: 152, scale: 2.0, offsetY: 80, rotation: 0 },
+                    { type: 'image', id: 'tophat', src: 'https://i.imgur.com/4m28mqF.png', anchorIndex: 10, scale: 1.6, offsetY: -120, rotation: 0 },
+                    { type: 'image', id: 'carrot', src: 'https://i.imgur.com/6Ir5kls.png', anchorIndex: 1, scale: 0.8, offsetY: 10, rotation: 0 }
+                ]
+            },
+            {
+                id: 'elf',
+                parts: [
+                    // Ears first (168 = Between Eyes, good central anchor)
+                    { type: 'image', id: 'elf_ears', src: 'https://i.imgur.com/EuC4VsP.png', anchorIndex: 168, scale: 2.2, offsetY: -20, rotation: 0 },
+                    { type: 'image', id: 'elf_hat', src: 'https://i.imgur.com/qXyP0PS.png', anchorIndex: 10, scale: 1.8, offsetY: -100, rotation: 0 }
+                ]
+            }
+        ];
+
+        // --- APP STATE ---
+        let debugMode = false;
+        let selectedFaceIndex = -1; 
+        let selectedPartIndex = 0; 
+        let loadedImages = {};
+        let faceAssignments = new Map();
+        let detectedFaces = [];
+
+        // --- ELEMENTS ---
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const ctx = canvasElement.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+        const loadingText = document.getElementById('loading-text');
+        const spinner = document.querySelector('.spinner');
+        
+        // --- CONTROLS ---
+        function toggleDebug() {
+            debugMode = !debugMode;
+            const btn = document.getElementById('btn-debug');
+            btn.innerText = debugMode ? "Debug: ON" : "Debug: OFF";
+            btn.classList.toggle('active', debugMode);
+            // Reset selection when toggling off
+            if (!debugMode) {
+                selectedFaceIndex = -1;
+                document.getElementById('prop-controls').style.opacity = '0.5';
+                document.getElementById('prop-controls').style.pointerEvents = 'none';
+            }
+        }
+
+        function updateProp(key, val) {
+            if (selectedFaceIndex === -1) return;
+            const filterIndex = faceAssignments.get(selectedFaceIndex);
+            const filter = FILTERS[filterIndex];
+            const part = filter.parts[selectedPartIndex];
+            
+            // Update the live object
+            part[key] = parseFloat(val);
+            
+            // Update UI
+            if (key === 'scale') document.getElementById('val-scale').innerText = val;
+            if (key === 'offsetY') document.getElementById('val-offset').innerText = val;
+            if (key === 'rotation') document.getElementById('val-rotation').innerText = val;
+            
+            // Log for the user to copy
+            console.log(`Updated ${filter.id} [Part ${selectedPartIndex}]: Scale=${part.scale}, OffsetY=${part.offsetY}, Rot=${part.rotation}`);
+        }
+
+        function changePart(dir) {
+            if (selectedFaceIndex === -1) return;
+            const filterIndex = faceAssignments.get(selectedFaceIndex);
+            const filter = FILTERS[filterIndex];
+            
+            let newIndex = selectedPartIndex + dir;
+            if (newIndex < 0) newIndex = filter.parts.length - 1;
+            if (newIndex >= filter.parts.length) newIndex = 0;
+            
+            selectedPartIndex = newIndex;
+            refreshControlsUI();
+        }
+
+        function refreshControlsUI() {
+            const filterIndex = faceAssignments.get(selectedFaceIndex);
+            const filter = FILTERS[filterIndex];
+            const part = filter.parts[selectedPartIndex];
+
+            // Update Name & Part Label
+            document.getElementById('edit-name').innerText = `${filter.id.toUpperCase()} (${part.id})`;
+            
+            const nav = document.getElementById('part-nav');
+            if (filter.parts.length > 1) {
+                nav.style.display = 'flex';
+                document.getElementById('part-label').innerText = `${selectedPartIndex + 1}/${filter.parts.length}`;
+            } else {
+                nav.style.display = 'none';
+            }
+
+            // Update Sliders
+            document.getElementById('in-scale').value = part.scale;
+            document.getElementById('val-scale').innerText = part.scale;
+            
+            document.getElementById('in-offset').value = part.offsetY;
+            document.getElementById('val-offset').innerText = part.offsetY;
+            
+            // Handle undefined rotation (legacy assets)
+            const rot = part.rotation || 0;
+            document.getElementById('in-rotation').value = rot;
+            document.getElementById('val-rotation').innerText = rot;
+        }
+
+        function activateControls(faceIndex) {
+            selectedFaceIndex = faceIndex;
+            selectedPartIndex = 0; // Reset to first part on new selection
+            
+            // Enable UI
+            const panel = document.getElementById('prop-controls');
+            panel.style.opacity = '1';
+            panel.style.pointerEvents = 'auto';
+            
+            refreshControlsUI();
+        }
+
+        // --- CORE LOGIC ---
+        function loadAssets() {
+            const promises = [];
+            FILTERS.forEach(filter => {
+                filter.parts.forEach(part => {
+                    if (part.type === 'image') {
+                        const img = new Image();
+                        img.crossOrigin = "Anonymous"; 
+                        img.src = part.src;
+                        const p = new Promise(resolve => {
+                            img.onload = () => { loadedImages[part.id] = img; resolve(); };
+                            img.onerror = () => { console.warn("Asset failed:", part.id); resolve(); };
+                            setTimeout(() => resolve(), 3000); // 3s Timeout
+                        });
+                        promises.push(p);
+                    }
+                });
+            });
+            return Promise.all(promises);
+        }
+
+        function onResults(results) {
+            loadingDiv.style.display = 'none';
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+
+            // Mirror
+            ctx.save();
+            ctx.translate(canvasElement.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            detectedFaces = [];
+
+            if (results.multiFaceLandmarks) {
+                // Sort faces L-to-R
+                const sorted = results.multiFaceLandmarks.map((l, i) => ({ l, i, x: l[1].x })).sort((a,b) => a.x - b.x);
+
+                sorted.forEach((face, idx) => {
+                    const landmarks = face.l;
+                    
+                    // Assign Filter
+                    if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
+                    const filterIndex = faceAssignments.get(idx);
+                    const filter = FILTERS[filterIndex];
+
+                    // Draw All Parts
+                    filter.parts.forEach((part, partIdx) => {
+                        const isSelected = (debugMode && selectedFaceIndex === idx && selectedPartIndex === partIdx);
+                        drawSticker(ctx, part, landmarks, isSelected);
+                    });
+
+                    // Debug Overlay
+                    if (debugMode) drawDebugMarkers(ctx, landmarks, idx);
+
+                    // Click Hitbox
+                    detectedFaces.push({ id: idx, box: getBoundingBox(landmarks), filterIndex });
+                });
+            }
+            ctx.restore();
+        }
+
+        function drawSticker(ctx, part, landmarks, isSelected) {
+            const faceWidth = getFaceWidth(landmarks);
+            const angle = getFaceRoll(landmarks);
+            const anchor = landmarks[part.anchorIndex];
+            
+            const x = anchor.x * canvasElement.width;
+            const y = anchor.y * canvasElement.height;
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(-1, 1); // Un-mirror text/images
+            
+            // Apply Face Rotation + Manual Adjustment
+            const manualRotRad = (part.rotation || 0) * (Math.PI / 180);
+            ctx.rotate(-angle + manualRotRad);
+            
+            const size = faceWidth * part.scale;
+
+            // Visual Highlight if selected
+            if (isSelected) {
+                ctx.globalAlpha = 0.8;
+                ctx.shadowColor = '#00ff88';
+                ctx.shadowBlur = 30;
+            }
+
+            if (part.type === 'emoji') {
+                ctx.font = `${size}px serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(part.content, 0, part.offsetY);
+            } else if (part.type === 'image') {
+                const img = loadedImages[part.id];
+                if (img) {
+                    const h = size * (img.height / img.width);
+                    ctx.drawImage(img, -size/2, -h/2 + part.offsetY, size, h);
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawDebugMarkers(ctx, landmarks, faceId) {
+            const anchors = [
+                {id: 10, color: 'red'},   // Forehead
+                {id: 168, color: '#0f0'}, // Glasses/Eyes Center
+                {id: 1, color: 'orange'}, // Nose
+                {id: 152, color: 'cyan'}  // Chin
+            ];
+
+            ctx.save();
+            anchors.forEach(a => {
+                const pt = landmarks[a.id];
+                const x = pt.x * canvasElement.width;
+                const y = pt.y * canvasElement.height;
+                
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, 2*Math.PI);
+                ctx.fillStyle = a.color;
+                ctx.fill();
+                
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.scale(-1, 1); 
+                ctx.fillStyle = "white";
+                ctx.font = "bold 12px sans-serif";
+                ctx.fillText(a.id, 6, 4);
+                ctx.restore();
+            });
+            ctx.restore();
+        }
+
+        // --- MATH ---
+        function getFaceWidth(landmarks) {
+            const l = landmarks[234], r = landmarks[454];
+            return Math.sqrt(Math.pow(r.x - l.x, 2) + Math.pow(r.y - l.y, 2)) * canvasElement.width;
+        }
+        function getFaceRoll(landmarks) {
+            const l = landmarks[33], r = landmarks[263];
+            return Math.atan2(r.y - l.y, r.x - l.x);
+        }
+        function getBoundingBox(landmarks) {
+            let minX=1, minY=1, maxX=0, maxY=0;
+            landmarks.forEach(p => { 
+                if(p.x < minX) minX=p.x; if(p.x > maxX) maxX=p.x;
+                if(p.y < minY) minY=p.y; if(p.y > maxY) maxY=p.y;
+            });
+            return {minX, minY, maxX, maxY};
+        }
+
+        // --- INPUT ---
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#controls')) return;
+
+            const rect = canvasElement.getBoundingClientRect();
+            const normX = 1 - ((e.clientX - rect.left) / rect.width); // Mirror X
+            const normY = (e.clientY - rect.top) / rect.height;
+
+            detectedFaces.forEach(face => {
+                const b = face.box;
+                if (normX >= b.minX && normX <= b.maxX && normY >= b.minY && normY <= b.maxY) {
+                    
+                    if (debugMode) {
+                        activateControls(face.id);
+                    } else {
+                        // Normal mode: Swap Filter
+                        const next = (face.filterIndex + 1) % FILTERS.length;
+                        faceAssignments.set(face.id, next);
+                    }
+                }
+            });
+        });
+
+        // --- START ---
+        async function startApp() {
+            try {
+                if (typeof FaceMesh === 'undefined' || typeof Camera === 'undefined') {
+                    throw new Error("MediaPipe libraries failed to load.");
+                }
+
+                const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+                faceMesh.setOptions({maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+                faceMesh.onResults(onResults);
+                
+                await loadAssets();
+                
+                loadingText.innerText = "Requesting Camera...";
+                
+                const cam = new Camera(videoElement, {
+                    onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, 
+                    width:1280, 
+                    height:720
+                });
+                
+                await cam.start();
+                loadingText.innerText = "Waiting for face...";
+                
+            } catch (err) {
+                console.error(err);
+                spinner.style.display = 'none';
+                loadingDiv.style.backgroundColor = 'rgba(255, 50, 50, 0.9)';
+                loadingDiv.innerHTML = `<strong>Error:</strong><br>${err.message}`;
+            }
+        }
+
+        startApp();
+
+    </script>
+</body>
+</html>
