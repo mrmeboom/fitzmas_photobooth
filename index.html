@@ -10,7 +10,8 @@
     
     <style>
         body { margin: 0; background-color: #0d1117; font-family: sans-serif; overflow: hidden; height: 100vh; color: white; }
-        canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        /* Removed transform: scaleX(-1) to enable natural mirror/selfie mode */
+        canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
         
         /* Controls */
@@ -73,12 +74,17 @@
                     <input type="range" min="0.1" max="5.0" step="0.1" id="in-scale" oninput="updateProp('scale', this.value)">
                 </div>
                 
+                <!-- NEW: Offset X Slider -->
                 <div class="control-row">
-                    <label>Offset Y <span id="val-offset">0</span></label>
-                    <input type="range" min="-300" max="300" step="5" id="in-offset" oninput="updateProp('offsetY', this.value)">
+                    <label>Offset X <span id="val-offsetX">0</span></label>
+                    <input type="range" min="-300" max="300" step="5" id="in-offsetX" oninput="updateProp('offsetX', this.value)">
                 </div>
 
-                <!-- NEW: Rotation Slider -->
+                <div class="control-row">
+                    <label>Offset Y <span id="val-offsetY">0</span></label>
+                    <input type="range" min="-300" max="300" step="5" id="in-offsetY" oninput="updateProp('offsetY', this.value)">
+                </div>
+
                 <div class="control-row">
                     <label>Rotate <span id="val-rotation">0</span>°</label>
                     <input type="range" min="-180" max="180" step="5" id="in-rotation" oninput="updateProp('rotation', this.value)">
@@ -101,15 +107,15 @@
                 id: 'santa',
                 parts: [
                     // Beard first so it goes behind/under the hat if they overlap
-                    { type: 'image', id: 'santa_beard', src: 'https://i.imgur.com/sDafmKM.png', anchorIndex: 152, scale: 1.6, offsetY: 30, rotation: 0 },
-                    { type: 'image', id: 'santa_hat', src: 'https://i.imgur.com/xE8op0x.png', anchorIndex: 10, scale: 2.0, offsetY: -100, rotation: 0 }
+                    { type: 'image', id: 'santa_beard', src: 'https://i.imgur.com/sDafmKM.png', anchorIndex: 152, scale: 1.6, offsetX: 0, offsetY: 30, rotation: 0 },
+                    { type: 'image', id: 'santa_hat', src: 'https://i.imgur.com/xE8op0x.png', anchorIndex: 10, scale: 2.0, offsetX: 0, offsetY: -100, rotation: 0 }
                 ]
             },
             {
                 id: 'reindeer',
                 parts: [
-                    { type: 'image', id: 'antlers', src: 'https://i.imgur.com/CUThQ6s.png', anchorIndex: 10, scale: 2.5, offsetY: -80, rotation: 0 },
-                    { type: 'image', id: 'red_nose', src: 'https://i.imgur.com/LB5YQjz.png', anchorIndex: 1, scale: 0.6, offsetY: -10, rotation: 0 }
+                    { type: 'image', id: 'antlers', src: 'https://i.imgur.com/CUThQ6s.png', anchorIndex: 10, scale: 2.5, offsetX: 0, offsetY: -80, rotation: 0 },
+                    { type: 'image', id: 'red_nose', src: 'https://i.imgur.com/LB5YQjz.png', anchorIndex: 1, scale: 0.6, offsetX: 0, offsetY: -10, rotation: 0 }
                 ]
             },
             {
@@ -117,17 +123,17 @@
                 parts: [
                     // Scarf goes behind to look like it's around the neck
                     // Anchor 152 is Chin. Offset Y positive moves it DOWN.
-                    { type: 'image', id: 'scarf', src: 'https://i.imgur.com/9N9LTnb.png', anchorIndex: 152, scale: 2.0, offsetY: 80, rotation: 0 },
-                    { type: 'image', id: 'tophat', src: 'https://i.imgur.com/4m28mqF.png', anchorIndex: 10, scale: 1.6, offsetY: -120, rotation: 0 },
-                    { type: 'image', id: 'carrot', src: 'https://i.imgur.com/6Ir5kls.png', anchorIndex: 1, scale: 0.8, offsetY: 10, rotation: 0 }
+                    { type: 'image', id: 'scarf', src: 'https://i.imgur.com/Ylj2u9R.png', anchorIndex: 152, scale: 2.0, offsetX: 0, offsetY: 80, rotation: 0 },
+                    { type: 'image', id: 'tophat', src: 'https://i.imgur.com/4m28mqF.png', anchorIndex: 10, scale: 1.6, offsetX: 0, offsetY: -120, rotation: 0 },
+                    { type: 'image', id: 'carrot', src: 'https://i.imgur.com/6Ir5kls.png', anchorIndex: 1, scale: 0.8, offsetX: 0, offsetY: 10, rotation: 0 }
                 ]
             },
             {
                 id: 'elf',
                 parts: [
                     // Ears first (168 = Between Eyes, good central anchor)
-                    { type: 'image', id: 'elf_ears', src: 'https://i.imgur.com/EuC4VsP.png', anchorIndex: 168, scale: 2.2, offsetY: -20, rotation: 0 },
-                    { type: 'image', id: 'elf_hat', src: 'https://i.imgur.com/qXyP0PS.png', anchorIndex: 10, scale: 1.8, offsetY: -100, rotation: 0 }
+                    { type: 'image', id: 'elf_ears', src: 'https://i.imgur.com/EuC4VsP.png', anchorIndex: 168, scale: 2.2, offsetX: 0, offsetY: -20, rotation: 0 },
+                    { type: 'image', id: 'elf_hat', src: 'https://i.imgur.com/qXyP0PS.png', anchorIndex: 10, scale: 1.8, offsetX: 0, offsetY: -100, rotation: 0 }
                 ]
             }
         ];
@@ -173,11 +179,12 @@
             
             // Update UI
             if (key === 'scale') document.getElementById('val-scale').innerText = val;
-            if (key === 'offsetY') document.getElementById('val-offset').innerText = val;
+            if (key === 'offsetX') document.getElementById('val-offsetX').innerText = val;
+            if (key === 'offsetY') document.getElementById('val-offsetY').innerText = val;
             if (key === 'rotation') document.getElementById('val-rotation').innerText = val;
             
             // Log for the user to copy
-            console.log(`Updated ${filter.id} [Part ${selectedPartIndex}]: Scale=${part.scale}, OffsetY=${part.offsetY}, Rot=${part.rotation}`);
+            console.log(`Updated ${filter.id} [Part ${selectedPartIndex}]: Scale=${part.scale}, OffX=${part.offsetX}, OffY=${part.offsetY}, Rot=${part.rotation}`);
         }
 
         function changePart(dir) {
@@ -213,10 +220,16 @@
             document.getElementById('in-scale').value = part.scale;
             document.getElementById('val-scale').innerText = part.scale;
             
-            document.getElementById('in-offset').value = part.offsetY;
-            document.getElementById('val-offset').innerText = part.offsetY;
+            // Handle X
+            const offX = part.offsetX || 0;
+            document.getElementById('in-offsetX').value = offX;
+            document.getElementById('val-offsetX').innerText = offX;
+
+            // Handle Y
+            document.getElementById('in-offsetY').value = part.offsetY;
+            document.getElementById('val-offsetY').innerText = part.offsetY;
             
-            // Handle undefined rotation (legacy assets)
+            // Handle Rotation
             const rot = part.rotation || 0;
             document.getElementById('in-rotation').value = rot;
             document.getElementById('val-rotation').innerText = rot;
@@ -321,16 +334,20 @@
                 ctx.shadowBlur = 30;
             }
 
+            // Defaults
+            const offX = part.offsetX || 0;
+            const offY = part.offsetY || 0;
+
             if (part.type === 'emoji') {
                 ctx.font = `${size}px serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(part.content, 0, part.offsetY);
+                ctx.fillText(part.content, offX, offY);
             } else if (part.type === 'image') {
                 const img = loadedImages[part.id];
                 if (img) {
                     const h = size * (img.height / img.width);
-                    ctx.drawImage(img, -size/2, -h/2 + part.offsetY, size, h);
+                    ctx.drawImage(img, -size/2 + offX, -h/2 + offY, size, h);
                 }
             }
             ctx.restore();
