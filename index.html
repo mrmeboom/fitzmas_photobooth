@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D Sticker Booth (Matrix Engine)</title>
+    <title>3D Sticker Booth (iPad Optimized)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     
@@ -16,8 +16,9 @@
             height: 100vh;
             overflow: hidden;
             background: #000;
-            /* Important: Perspective must be on the container to see Z depth */
             perspective: 800px; 
+            /* iOS Safari Hardware Acceleration Hint */
+            transform: translateZ(0);
         }
 
         canvas { 
@@ -32,16 +33,22 @@
             left: 0; top: 0;
             width: 100%; height: 100%;
             pointer-events: none;
-            transform-style: preserve-3d; /* Crucial for nested 3D */
+            /* WebKit prefixes for older iOS compatibility */
+            -webkit-perspective: 800px;
+            -webkit-transform-style: preserve-3d;
+            transform-style: preserve-3d;
         }
 
         .sticker {
             position: absolute;
             top: 0; left: 0;
+            -webkit-transform-style: preserve-3d;
             transform-style: preserve-3d;
             will-change: transform;
-            /* We handle centering via matrix translation, so origin is top-left */
             transform-origin: 0 0; 
+            /* Prevents flickering on iOS */
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
 
         /* UI Styling */
@@ -84,7 +91,7 @@
     <div id="ui-layer">
         <div id="loading">
             <div class="spinner"></div>
-            <div id="loading-text">Initializing Matrix Engine...</div>
+            <div id="loading-text">Optimizing for iPad...</div>
         </div>
         
         <div id="controls">
@@ -127,7 +134,6 @@
         // --- CONFIGURATION ---
         const SMOOTHING = 0.2; 
 
-        // Update: Increased Z-indexes slightly to ensure they sit above video plane
         const FILTERS = [
             {
                 id: 'santa',
@@ -186,6 +192,9 @@
 
         // --- VECTOR MATH (MATRIX ENGINE) ---
         
+        // Float rounding helper for older iOS CSS parsing
+        const f = (n) => n.toFixed(4);
+
         function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
         function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
         function normalize(v) {
@@ -210,8 +219,6 @@
             const mouth = getMirroredPoint(landmarks[13], width, height); // Upper Lip
             
             // 1. X-Axis (Right Direction): Eye Left to Eye Right
-            // In mirror mode, L is visually on Right, R on Left.
-            // So Vector R->L points "Right" visually.
             const vecX = normalize(subtract(eyeL, eyeR));
 
             // 2. Temp Y (Down Direction): Mid-Eye to Mouth
@@ -327,12 +334,11 @@
                         const Y = state.basis.y;
                         const Z = state.basis.z;
                         
-                        // 1. Build the Matrix String
-                        // Note: We don't include translation here yet, we do it via translate3d to make order clear
+                        // 1. Build the Matrix String (Truncated for old iOS stability)
                         const rotationMatrix = `matrix3d(
-                            ${X.x}, ${X.y}, ${X.z}, 0,
-                            ${Y.x}, ${Y.y}, ${Y.z}, 0,
-                            ${Z.x}, ${Z.y}, ${Z.z}, 0,
+                            ${f(X.x)}, ${f(X.y)}, ${f(X.z)}, 0,
+                            ${f(Y.x)}, ${f(Y.y)}, ${f(Y.z)}, 0,
+                            ${f(Z.x)}, ${f(Z.y)}, ${f(Z.z)}, 0,
                             0, 0, 0, 1
                         )`;
 
@@ -342,11 +348,8 @@
                         const manualRot = (part.rotation || 0);
 
                         // 3. Compose Transform
-                        // Move to Face Anchor -> Rotate with Face -> Manual Rotate -> Scale -> Offset -> Center Image
-                        // Order is strictly Right-to-Left (or Top-to-Bottom in CSS logic)
-                        
                         el.style.transform = `
-                            translate3d(${smoothAnchor.x}px, ${smoothAnchor.y}px, ${smoothAnchor.z}px)
+                            translate3d(${f(smoothAnchor.x)}px, ${f(smoothAnchor.y)}px, ${f(smoothAnchor.z)}px)
                             ${rotationMatrix}
                             rotateZ(${manualRot}deg)
                             translate(${offX}px, ${offY}px)
@@ -457,7 +460,15 @@
                 faceMesh.onResults(onResults);
                 await loadAssets();
                 loadingText.innerText = "Requesting Camera...";
-                const cam = new Camera(videoElement, {onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, width:1280, height:720});
+                
+                // PERFORMANCE FIX: Request 640x480 (VGA) instead of 720p
+                // This is the native aspect ratio for iPads and much lighter on the A9 chip
+                const cam = new Camera(videoElement, {
+                    onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, 
+                    width: 640, 
+                    height: 480 
+                });
+                
                 await cam.start();
                 loadingText.innerText = "Waiting for face...";
             } catch (err) {
