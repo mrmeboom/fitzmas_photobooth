@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D Sticker Booth (Modern Mobile)</title>
+    <title>3D Sticker Booth (Auto Cloud Sync)</title>
+    <!-- AI & AR Engines -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     
@@ -17,7 +18,7 @@
             overflow: hidden;
             background: #000;
             perspective: 800px; 
-            transform: translateZ(0); /* Hardware accel */
+            transform: translateZ(0);
         }
 
         canvas { 
@@ -41,13 +42,12 @@
             transform-style: preserve-3d;
             will-change: transform;
             transform-origin: 0 0; 
-            backface-visibility: hidden; /* Clean edges */
+            backface-visibility: hidden;
         }
 
         /* --- UI LAYERS --- */
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; }
         
-        /* Shutter Button - Optimized for Thumb */
         #shutter-btn {
             position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
             width: 80px; height: 80px;
@@ -61,7 +61,6 @@
         }
         #shutter-btn:active { transform: translateX(-50%) scale(0.9); background: #ddd; }
 
-        /* Countdown */
         #countdown {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             font-size: 150px; font-weight: 800; color: white;
@@ -70,14 +69,12 @@
             font-variant-numeric: tabular-nums;
         }
 
-        /* Flash */
         #flash {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: white; opacity: 0; pointer-events: none; z-index: 70;
             transition: opacity 0.1s ease-out;
         }
 
-        /* Result Modal */
         #result-modal {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.95); z-index: 80;
@@ -86,21 +83,40 @@
             backdrop-filter: blur(10px);
         }
         #result-img {
-            max-width: 90%; max-height: 65%;
+            max-width: 90%; max-height: 60%;
             border-radius: 16px; 
             box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             border: 2px solid #333;
         }
-        .modal-btns { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .modal-btns { display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; width: 90%; }
         .btn-action {
-            padding: 14px 28px; border-radius: 30px; border: none;
+            padding: 14px 24px; border-radius: 12px; border: none;
             font-size: 16px; font-weight: 600; cursor: pointer;
             color: white; transition: transform 0.1s;
+            display: flex; align-items: center; gap: 8px;
         }
         .btn-action:active { transform: scale(0.95); }
         .btn-save { background: #007AFF; color: white; box-shadow: 0 4px 15px rgba(0, 122, 255, 0.4); }
-        .btn-retake { background: #333; color: #ddd; }
+        .btn-retake { background: transparent; color: #aaa; border: 1px solid #444; }
+
+        /* Cloud Status Indicator */
+        #cloud-status {
+            margin-top: 15px;
+            font-size: 13px;
+            color: #888;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background-color: #444;
+        }
+        .status-dot.uploading { background-color: #FFD700; box-shadow: 0 0 8px #FFD700; }
+        .status-dot.done { background-color: #00ff88; box-shadow: 0 0 8px #00ff88; }
+        .status-dot.error { background-color: #ff4444; }
 
         /* Controls (Debug) - Compact */
         #controls {
@@ -113,19 +129,15 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255,255,255,0.1);
         }
-        
         #controls.minimized { width: auto; min-width: 0; padding: 8px; height: auto; overflow: hidden; }
         #controls.minimized .control-content { display: none; }
-
         .control-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
         .control-row { display: flex; justify-content: space-between; margin-bottom: 8px; align-items: center; }
         input[type=range] { width: 100px; accent-color: #00ff88; }
         label { font-size: 11px; color: #ccc; font-weight: 500; }
-        
         button { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
         button.active { background: #00ff88; color: black; border-color: #00ff88; }
         button.icon-btn { padding: 4px 10px; font-weight: bold; }
-        
         .part-nav { display: flex; gap: 5px; align-items: center; }
         
         #loading { 
@@ -195,13 +207,79 @@
     <!-- Result Modal -->
     <div id="result-modal">
         <img id="result-img" src="" alt="Captured Photo">
-        <div class="modal-btns">
-            <button class="btn-action btn-retake" onclick="closeModal()">Retake</button>
+        
+        <div class="modal-btns" id="action-buttons">
             <a id="download-link" download="photobooth_snap.jpg">
-                <button class="btn-action btn-save">Download</button>
+                <button class="btn-action btn-save">Download ⬇️</button>
             </a>
+            <button class="btn-action btn-retake" onclick="closeModal()">Retake</button>
+        </div>
+
+        <div id="cloud-status">
+            <div class="status-dot" id="status-dot"></div>
+            <span id="status-text">Ready</span>
         </div>
     </div>
+
+    <script>
+        // --- CLOUDINARY CONFIGURATION ---
+        // 1. Sign up at cloudinary.com (Free)
+        // 2. Settings -> Upload -> Add Upload Preset -> Signing Mode: "Unsigned"
+        
+        const CLOUDINARY_CONFIG = {
+            cloudName: "YOUR_CLOUD_NAME", // e.g. "demo"
+            uploadPreset: "YOUR_UNSIGNED_PRESET_NAME" // e.g. "party_uploads"
+        };
+
+        // AUTO-UPLOAD Function (No SDK needed, just standard Fetch)
+        window.autoUploadToCloud = async function(blob) {
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+
+            if (CLOUDINARY_CONFIG.cloudName === "YOUR_CLOUD_NAME") {
+                statusText.innerText = "Cloud not configured";
+                statusDot.className = "status-dot error";
+                return;
+            }
+
+            // UI State: Uploading
+            statusText.innerText = "Backing up...";
+            statusDot.className = "status-dot uploading";
+
+            try {
+                // 1. Prepare Data
+                const formData = new FormData();
+                formData.append('file', blob);
+                formData.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
+                // Optional: Add tags to find them easily later
+                formData.append('tags', 'office_party_2024'); 
+
+                // 2. Send to Cloudinary API
+                const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/image/upload`;
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
+
+                // 3. Success
+                statusText.innerText = "Backed up ✔️";
+                statusDot.className = "status-dot done";
+                console.log("Uploaded!", data.secure_url);
+
+            } catch (err) {
+                console.error("Upload Error:", err);
+                statusText.innerText = "Backup Failed";
+                statusDot.className = "status-dot error";
+            }
+        };
+    </script>
 
     <script>
         // --- CONFIGURATION ---
@@ -333,16 +411,13 @@
         function onResults(results) {
             loadingDiv.style.display = 'none';
             
-            // High DPI Canvas Handling for crisp photos
             const dpr = window.devicePixelRatio || 1;
             canvasElement.width = window.innerWidth * dpr;
             canvasElement.height = window.innerHeight * dpr;
 
-            // Draw Video (Mirrored)
             ctx.save();
             ctx.translate(canvasElement.width, 0);
             ctx.scale(-1, 1);
-            // Draw video to fill the high-dpi canvas
             ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
             ctx.restore();
 
@@ -361,7 +436,6 @@
                     const filterIndex = faceAssignments.get(idx);
                     const filter = FILTERS[filterIndex];
 
-                    // Calculations based on High-DPI canvas size
                     const targetWidth = Math.abs(landmarks[454].x - landmarks[234].x) * canvasElement.width; 
                     const matrixBasis = calculateFaceMatrix(landmarks, canvasElement.width, canvasElement.height);
                     
@@ -401,7 +475,7 @@
                             0, 0, 0, 1
                         )`;
 
-                        const cssScale = 1 / dpr; // Scale down for CSS display
+                        const cssScale = 1 / dpr; 
                         
                         const offX = (part.offsetX || 0) * dpr;
                         const offY = (part.offsetY || 0) * dpr;
@@ -421,16 +495,15 @@
                             translate(-50%, -50%)
                         `;
                         
-                        const size = state.w * part.scale; // Canvas pixel size
-                        el.style.width = `${size * cssScale}px`; // CSS pixel size
+                        const size = state.w * part.scale; 
+                        el.style.width = `${size * cssScale}px`; 
                         el.style.height = "auto"; 
                         el.style.filter = isSelected ? "drop-shadow(0 0 10px #00ff88) brightness(1.2)" : "none";
                         el.style.display = 'block';
 
-                        // Store HIGH RES data for snapshot
                         const simpleRoll = Math.atan2(X.y, X.x) + (rotZ * Math.PI/180);
                         faceSnapshotParts.push({
-                            id: part.id, // Store ID for instant lookup
+                            id: part.id, 
                             src: part.src || part.content,
                             type: part.type,
                             x: smoothAnchor.x + offX, 
@@ -490,41 +563,46 @@
             snapCanvas.height = canvasElement.height;
             const snapCtx = snapCanvas.getContext('2d');
 
-            // 1. Draw Video
             snapCtx.drawImage(canvasElement, 0, 0);
 
-            // 2. Draw Stickers (Instant Draw using Loaded Cache)
             let allParts = [];
             activeFaceData.forEach(parts => { allParts = allParts.concat(parts); });
             allParts.sort((a, b) => a.zIndex - b.zIndex);
 
             allParts.forEach(part => {
                 if (part.type === 'image') {
-                    // Use pre-loaded image from cache
                     const img = loadedImages[part.id];
-                    
                     if (img && img.complete) {
                         snapCtx.save();
                         snapCtx.translate(part.x, part.y);
                         snapCtx.rotate(part.rotation);
-                        
                         const aspect = img.height / img.width;
                         const drawW = part.scale;
                         const drawH = part.scale * aspect;
-                        
                         snapCtx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
                         snapCtx.restore();
                     }
                 }
             });
 
-            // 3. Output
             const dataURL = snapCanvas.toDataURL('image/jpeg', 0.9);
             const imgEl = document.getElementById('result-img');
             imgEl.src = dataURL;
             
             document.getElementById('download-link').href = dataURL;
             document.getElementById('result-modal').style.display = 'flex';
+            
+            // AUTO UPLOAD
+            const statusText = document.getElementById('status-text');
+            const statusDot = document.getElementById('status-dot');
+            statusText.innerText = "Processing...";
+            statusDot.className = "status-dot";
+
+            fetch(dataURL)
+                .then(res => res.blob())
+                .then(blob => {
+                    if (window.autoUploadToCloud) window.autoUploadToCloud(blob);
+                });
         }
 
         function closeModal() {
@@ -559,7 +637,6 @@
         document.addEventListener('click', (e) => {
             if (e.target.closest('#controls') || e.target.closest('#shutter-btn') || e.target.closest('#result-modal')) return;
             const rect = canvasElement.getBoundingClientRect();
-            // Normalized touch coords (0-1)
             const normX = 1 - ((e.clientX - rect.left) / rect.width);
             const normY = (e.clientY - rect.top) / rect.height;
             detectedFaces.forEach(face => {
@@ -655,7 +732,6 @@
                 await loadAssets();
                 loadingText.innerText = "Requesting Camera...";
                 
-                // RESTORED HD QUALITY
                 const cam = new Camera(videoElement, {
                     onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, 
                     width: 1280, 
