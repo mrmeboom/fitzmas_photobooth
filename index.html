@@ -227,8 +227,8 @@
         // 2. Settings -> Upload -> Add Upload Preset -> Signing Mode: "Unsigned"
         
         const CLOUDINARY_CONFIG = {
-            cloudName: "YOUR_CLOUD_NAME", // e.g. "demo"
-            uploadPreset: "YOUR_UNSIGNED_PRESET_NAME" // e.g. "party_uploads"
+            cloudName: "dh85g5yyhE", // e.g. "demo"
+            uploadPreset: "fitzmas-photobooth" // e.g. "party_uploads"
         };
 
         // AUTO-UPLOAD Function (No SDK needed, just standard Fetch)
@@ -236,7 +236,7 @@
             const statusDot = document.getElementById('status-dot');
             const statusText = document.getElementById('status-text');
 
-            if (CLOUDINARY_CONFIG.cloudName === "YOUR_CLOUD_NAME") {
+            if (CLOUDINARY_CONFIG.cloudName === "dh85g5yyh") {
                 statusText.innerText = "Cloud not configured";
                 statusDot.className = "status-dot error";
                 return;
