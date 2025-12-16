@@ -3,18 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Designer Mode Booth</title>
-    <!-- Load MediaPipe scripts with error handling for the script tags themselves -->
+    <title>3D Sticker Booth (Matrix Engine)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     
     <style>
         body { margin: 0; background-color: #0d1117; font-family: sans-serif; overflow: hidden; height: 100vh; color: white; }
-        /* Removed transform: scaleX(-1) to enable natural mirror/selfie mode */
-        canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
         
-        /* Controls */
+        #scene-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #000;
+            /* Important: Perspective must be on the container to see Z depth */
+            perspective: 800px; 
+        }
+
+        canvas { 
+            position: absolute; 
+            left: 0; top: 0; 
+            width: 100%; height: 100%; 
+            object-fit: cover; 
+        }
+
+        #sticker-layer {
+            position: absolute;
+            left: 0; top: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            transform-style: preserve-3d; /* Crucial for nested 3D */
+        }
+
+        .sticker {
+            position: absolute;
+            top: 0; left: 0;
+            transform-style: preserve-3d;
+            will-change: transform;
+            /* We handle centering via matrix translation, so origin is top-left */
+            transform-origin: 0 0; 
+        }
+
+        /* UI Styling */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; }
+        
         #controls {
             position: absolute; bottom: 20px; left: 20px; 
             background: rgba(0,0,0,0.8); padding: 15px; border-radius: 12px;
@@ -29,7 +61,6 @@
         .part-nav { display: flex; gap: 5px; align-items: center; }
         .part-nav button { padding: 2px 8px; font-size: 10px; }
 
-        /* Loading */
         #loading { 
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
             background: rgba(0,0,0,0.85); padding: 24px; border-radius: 16px; 
@@ -44,13 +75,16 @@
 </head>
 <body>
 
-    <video id="input_video" style="display:none" playsinline muted></video>
-    <canvas id="output_canvas"></canvas>
+    <div id="scene-container">
+        <video id="input_video" style="display:none" playsinline muted></video>
+        <canvas id="output_canvas"></canvas>
+        <div id="sticker-layer"></div>
+    </div>
     
     <div id="ui-layer">
         <div id="loading">
             <div class="spinner"></div>
-            <div id="loading-text">Initializing...</div>
+            <div id="loading-text">Initializing Matrix Engine...</div>
         </div>
         
         <div id="controls">
@@ -73,181 +107,360 @@
                     <label>Scale <span id="val-scale">1.0</span></label>
                     <input type="range" min="0.1" max="5.0" step="0.1" id="in-scale" oninput="updateProp('scale', this.value)">
                 </div>
-                
-                <!-- NEW: Offset X Slider -->
                 <div class="control-row">
                     <label>Offset X <span id="val-offsetX">0</span></label>
                     <input type="range" min="-300" max="300" step="5" id="in-offsetX" oninput="updateProp('offsetX', this.value)">
                 </div>
-
                 <div class="control-row">
                     <label>Offset Y <span id="val-offsetY">0</span></label>
                     <input type="range" min="-300" max="300" step="5" id="in-offsetY" oninput="updateProp('offsetY', this.value)">
                 </div>
-
                 <div class="control-row">
                     <label>Rotate <span id="val-rotation">0</span>°</label>
                     <input type="range" min="-180" max="180" step="5" id="in-rotation" oninput="updateProp('rotation', this.value)">
-                </div>
-                
-                <div style="font-size: 10px; color: #888; margin-top:5px;">
-                    Tap face to select. Use &lt; &gt; to switch parts.
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        // --- ASSETS & CONFIG ---
-        
-        // Note: Parts are drawn in order. 
-        // Index 0 is drawn first (Background layer), Index 1 is drawn last (Foreground layer)
+        // --- CONFIGURATION ---
+        const SMOOTHING = 0.2; 
+
+        // Update: Increased Z-indexes slightly to ensure they sit above video plane
         const FILTERS = [
             {
                 id: 'santa',
                 parts: [
-                    // Beard first so it goes behind/under the hat if they overlap
-                    { type: 'image', id: 'santa_beard', src: 'https://i.imgur.com/sDafmKM.png', anchorIndex: 152, scale: 1.6, offsetX: 0, offsetY: 30, rotation: 0 },
-                    { type: 'image', id: 'santa_hat', src: 'https://i.imgur.com/xE8op0x.png', anchorIndex: 10, scale: 2.0, offsetX: 0, offsetY: -100, rotation: 0 }
+                    { type: 'image', id: 'santa_beard', src: 'https://i.imgur.com/sDafmKM.png', anchorIndex: 152, scale: 1.6, offsetX: 0, offsetY: 30, rotation: 0, zIndex: 100 },
+                    { type: 'image', id: 'santa_hat', src: 'https://i.imgur.com/xE8op0x.png', anchorIndex: 10, scale: 2.0, offsetX: 0, offsetY: -100, rotation: 0, zIndex: 200 }
                 ]
             },
             {
                 id: 'reindeer',
                 parts: [
-                    { type: 'image', id: 'antlers', src: 'https://i.imgur.com/CUThQ6s.png', anchorIndex: 10, scale: 2.5, offsetX: 0, offsetY: -80, rotation: 0 },
-                    { type: 'image', id: 'red_nose', src: 'https://i.imgur.com/LB5YQjz.png', anchorIndex: 1, scale: 0.6, offsetX: 0, offsetY: -10, rotation: 0 }
+                    { type: 'image', id: 'antlers', src: 'https://i.imgur.com/CUThQ6s.png', anchorIndex: 10, scale: 2.5, offsetX: 0, offsetY: -80, rotation: 0, zIndex: 200 },
+                    { type: 'image', id: 'red_nose', src: 'https://i.imgur.com/LB5YQjz.png', anchorIndex: 1, scale: 0.6, offsetX: 0, offsetY: -10, rotation: 0, zIndex: 150 }
                 ]
             },
             {
                 id: 'snowman',
                 parts: [
-                    // Scarf goes behind to look like it's around the neck
-                    // Anchor 152 is Chin. Offset Y positive moves it DOWN.
-                    { type: 'image', id: 'scarf', src: 'https://i.imgur.com/Ylj2u9R.png', anchorIndex: 152, scale: 2.0, offsetX: 0, offsetY: 80, rotation: 0 },
-                    { type: 'image', id: 'tophat', src: 'https://i.imgur.com/4m28mqF.png', anchorIndex: 10, scale: 1.6, offsetX: 0, offsetY: -120, rotation: 0 },
-                    { type: 'image', id: 'carrot', src: 'https://i.imgur.com/6Ir5kls.png', anchorIndex: 1, scale: 0.8, offsetX: 0, offsetY: 10, rotation: 0 }
+                    { type: 'image', id: 'scarf', src: 'https://i.imgur.com/Ylj2u9R.png', anchorIndex: 152, scale: 2.0, offsetX: 0, offsetY: 80, rotation: 0, zIndex: 90 },
+                    { type: 'image', id: 'tophat', src: 'https://i.imgur.com/4m28mqF.png', anchorIndex: 10, scale: 1.6, offsetX: 0, offsetY: -120, rotation: 0, zIndex: 200 },
+                    { type: 'image', id: 'carrot', src: 'https://i.imgur.com/6Ir5kls.png', anchorIndex: 1, scale: 0.8, offsetX: 0, offsetY: 10, rotation: 0, zIndex: 150 }
                 ]
             },
             {
                 id: 'elf',
                 parts: [
-                    // Ears first (168 = Between Eyes, good central anchor)
-                    { type: 'image', id: 'elf_ears', src: 'https://i.imgur.com/EuC4VsP.png', anchorIndex: 168, scale: 2.2, offsetX: 0, offsetY: -20, rotation: 0 },
-                    { type: 'image', id: 'elf_hat', src: 'https://i.imgur.com/qXyP0PS.png', anchorIndex: 10, scale: 1.8, offsetX: 0, offsetY: -100, rotation: 0 }
+                    { type: 'image', id: 'elf_ears', src: 'https://i.imgur.com/EuC4VsP.png', anchorIndex: 168, scale: 2.2, offsetX: 0, offsetY: -20, rotation: 0, zIndex: 100 },
+                    { type: 'image', id: 'elf_hat', src: 'https://i.imgur.com/qXyP0PS.png', anchorIndex: 10, scale: 1.8, offsetX: 0, offsetY: -100, rotation: 0, zIndex: 200 }
                 ]
             }
         ];
 
-        // --- APP STATE ---
+        // --- STATE ---
         let debugMode = false;
         let selectedFaceIndex = -1; 
         let selectedPartIndex = 0; 
-        let loadedImages = {};
         let faceAssignments = new Map();
         let detectedFaces = [];
+        let faceStates = []; 
+        let loadedImages = {};
 
         // --- ELEMENTS ---
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
+        const stickerLayer = document.getElementById('sticker-layer');
         const ctx = canvasElement.getContext('2d');
         const loadingDiv = document.getElementById('loading');
         const loadingText = document.getElementById('loading-text');
-        const spinner = document.querySelector('.spinner');
+
+        // --- VECTOR MATH (MATRIX ENGINE) ---
         
-        // --- CONTROLS ---
+        function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
+        function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
+        function normalize(v) {
+            const mag = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) || 1;
+            return { x: v.x/mag, y: v.y/mag, z: v.z/mag };
+        }
+
+        // Project landmarks into Mirror Space (x flipped) and Pixels
+        function getMirroredPoint(landmark, width, height) {
+            return {
+                x: (1 - landmark.x) * width, // Mirror X
+                y: landmark.y * height,
+                z: -landmark.z * width // MediaPipe Z is normalized. Scale it. Negate it to match CSS "out of screen"
+            };
+        }
+
+        // Calculate the 3x3 Rotation Matrix Basis Vectors
+        function calculateFaceMatrix(landmarks, width, height) {
+            // Anchor Points
+            const eyeL = getMirroredPoint(landmarks[33], width, height); // Outer Left
+            const eyeR = getMirroredPoint(landmarks[263], width, height); // Outer Right
+            const mouth = getMirroredPoint(landmarks[13], width, height); // Upper Lip
+            
+            // 1. X-Axis (Right Direction): Eye Left to Eye Right
+            // In mirror mode, L is visually on Right, R on Left.
+            // So Vector R->L points "Right" visually.
+            const vecX = normalize(subtract(eyeL, eyeR));
+
+            // 2. Temp Y (Down Direction): Mid-Eye to Mouth
+            const midEye = { x: (eyeL.x + eyeR.x)/2, y: (eyeL.y + eyeR.y)/2, z: (eyeL.z + eyeR.z)/2 };
+            const vecY_temp = normalize(subtract(mouth, midEye));
+
+            // 3. Z-Axis (Forward/Normal): Cross Product X and Y
+            const vecZ = normalize(cross(vecX, vecY_temp));
+
+            // 4. Corrected Y-Axis: Cross Z and X
+            const vecY = normalize(cross(vecZ, vecX));
+
+            return { x: vecX, y: vecY, z: vecZ };
+        }
+
+        function lerp(start, end, amt) { return (1 - amt) * start + amt * end; }
+        
+        // Helper to lerp a full vector
+        function lerpVector(v1, v2, amt) {
+            return { x: lerp(v1.x, v2.x, amt), y: lerp(v1.y, v2.y, amt), z: lerp(v1.z, v2.z, amt) };
+        }
+
+        // --- RENDERING ---
+        
+        function getStickerElement(faceId, partId, src, type, zIndex) {
+            const id = `sticker-${faceId}-${partId}`;
+            let el = document.getElementById(id);
+            if (!el) {
+                if (type === 'image') {
+                    el = document.createElement('img');
+                    el.src = src;
+                } else {
+                    el = document.createElement('div');
+                    el.innerText = src;
+                    el.style.fontSize = "50px";
+                }
+                el.id = id;
+                el.className = 'sticker';
+                el.style.zIndex = zIndex; 
+                stickerLayer.appendChild(el);
+            }
+            if (type === 'image' && el.src !== src) el.src = src;
+            return el;
+        }
+
+        function onResults(results) {
+            loadingDiv.style.display = 'none';
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+
+            ctx.save();
+            ctx.translate(canvasElement.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            ctx.restore();
+
+            detectedFaces = [];
+            const currentStickerIds = new Set(); 
+
+            if (results.multiFaceLandmarks) {
+                const sorted = results.multiFaceLandmarks.map((l, i) => ({ l, i, x: l[1].x })).sort((a,b) => a.x - b.x);
+
+                if (sorted.length !== faceStates.length) faceStates = new Array(sorted.length).fill(null);
+
+                sorted.forEach((face, idx) => {
+                    const landmarks = face.l;
+                    
+                    if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
+                    const filterIndex = faceAssignments.get(idx);
+                    const filter = FILTERS[filterIndex];
+
+                    // --- CALCULATION ---
+                    const targetWidth = Math.abs(landmarks[454].x - landmarks[234].x) * canvasElement.width; 
+                    
+                    // Get the pure rotation vectors (Mirror corrected)
+                    const matrixBasis = calculateFaceMatrix(landmarks, canvasElement.width, canvasElement.height);
+                    
+                    if (!faceStates[idx]) {
+                        faceStates[idx] = { 
+                            w: targetWidth, 
+                            basis: matrixBasis,
+                            anchors: {} 
+                        };
+                    }
+
+                    const state = faceStates[idx];
+                    state.w = lerp(state.w, targetWidth, SMOOTHING);
+                    
+                    // Smooth the basis vectors
+                    state.basis.x = lerpVector(state.basis.x, matrixBasis.x, SMOOTHING);
+                    state.basis.y = lerpVector(state.basis.y, matrixBasis.y, SMOOTHING);
+                    state.basis.z = lerpVector(state.basis.z, matrixBasis.z, SMOOTHING);
+
+                    filter.parts.forEach((part, partIdx) => {
+                        const el = getStickerElement(idx, part.id, part.src || part.content, part.type, part.zIndex);
+                        currentStickerIds.add(el.id);
+
+                        const isSelected = (debugMode && selectedFaceIndex === idx && selectedPartIndex === partIdx);
+
+                        // Position: Mirror X, Scale Z
+                        const rawAnchor = getMirroredPoint(landmarks[part.anchorIndex], canvasElement.width, canvasElement.height);
+
+                        if (!state.anchors[part.anchorIndex]) state.anchors[part.anchorIndex] = rawAnchor;
+                        const smoothAnchor = state.anchors[part.anchorIndex];
+                        smoothAnchor.x = lerp(smoothAnchor.x, rawAnchor.x, SMOOTHING);
+                        smoothAnchor.y = lerp(smoothAnchor.y, rawAnchor.y, SMOOTHING);
+                        smoothAnchor.z = lerp(smoothAnchor.z, rawAnchor.z, SMOOTHING);
+
+                        // --- MATRIX CONSTRUCTION ---
+                        // matrix3d(a1, b1, c1, d1, a2, b2, c2, d2, a3, b3, c3, d3, a4, b4, c4, d4)
+                        // Vectors are columns.
+                        const X = state.basis.x;
+                        const Y = state.basis.y;
+                        const Z = state.basis.z;
+                        
+                        // 1. Build the Matrix String
+                        // Note: We don't include translation here yet, we do it via translate3d to make order clear
+                        const rotationMatrix = `matrix3d(
+                            ${X.x}, ${X.y}, ${X.z}, 0,
+                            ${Y.x}, ${Y.y}, ${Y.z}, 0,
+                            ${Z.x}, ${Z.y}, ${Z.z}, 0,
+                            0, 0, 0, 1
+                        )`;
+
+                        // 2. Offsets
+                        const offX = part.offsetX || 0;
+                        const offY = part.offsetY || 0;
+                        const manualRot = (part.rotation || 0);
+
+                        // 3. Compose Transform
+                        // Move to Face Anchor -> Rotate with Face -> Manual Rotate -> Scale -> Offset -> Center Image
+                        // Order is strictly Right-to-Left (or Top-to-Bottom in CSS logic)
+                        
+                        el.style.transform = `
+                            translate3d(${smoothAnchor.x}px, ${smoothAnchor.y}px, ${smoothAnchor.z}px)
+                            ${rotationMatrix}
+                            rotateZ(${manualRot}deg)
+                            translate(${offX}px, ${offY}px)
+                            translate(-50%, -50%)
+                        `;
+                        
+                        const size = state.w * part.scale;
+                        el.style.width = `${size}px`;
+                        el.style.height = "auto"; 
+                        
+                        el.style.filter = isSelected ? "drop-shadow(0 0 10px #00ff88) brightness(1.2)" : "none";
+                        el.style.display = 'block';
+                    });
+
+                    if (debugMode) drawDebugMarkers(ctx, landmarks);
+                    detectedFaces.push({ id: idx, box: getBoundingBox(landmarks), filterIndex });
+                });
+
+                const allStickers = document.querySelectorAll('.sticker');
+                allStickers.forEach(el => {
+                    if (!currentStickerIds.has(el.id)) el.style.display = 'none';
+                });
+            }
+        }
+
+        // --- UTILS ---
+        function getBoundingBox(landmarks) {
+            let minX=1, minY=1, maxX=0, maxY=0;
+            landmarks.forEach(p => { 
+                if(p.x < minX) minX=p.x; if(p.x > maxX) maxX=p.x;
+                if(p.y < minY) minY=p.y; if(p.y > maxY) maxY=p.y;
+            });
+            return {minX, minY, maxX, maxY};
+        }
+
+        function drawDebugMarkers(ctx, landmarks) {
+            const anchors = [{id: 10, color: 'red'}, {id: 168, color: '#0f0'}, {id: 1, color: 'orange'}, {id: 152, color: 'cyan'}];
+            ctx.save();
+            ctx.translate(canvasElement.width, 0); ctx.scale(-1, 1); 
+            anchors.forEach(a => {
+                const pt = landmarks[a.id];
+                const x = pt.x * canvasElement.width;
+                const y = pt.y * canvasElement.height;
+                ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fillStyle = a.color; ctx.fill();
+            });
+            ctx.restore();
+        }
+
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#controls')) return;
+            const rect = canvasElement.getBoundingClientRect();
+            const normX = 1 - ((e.clientX - rect.left) / rect.width);
+            const normY = (e.clientY - rect.top) / rect.height;
+            detectedFaces.forEach(face => {
+                const b = face.box;
+                if (normX >= b.minX && normX <= b.maxX && normY >= b.minY && normY <= b.maxY) {
+                    if (debugMode) activateControls(face.id);
+                    else {
+                        const next = (face.filterIndex + 1) % FILTERS.length;
+                        faceAssignments.set(face.id, next);
+                    }
+                }
+            });
+        });
+
         function toggleDebug() {
             debugMode = !debugMode;
             const btn = document.getElementById('btn-debug');
             btn.innerText = debugMode ? "Debug: ON" : "Debug: OFF";
             btn.classList.toggle('active', debugMode);
-            // Reset selection when toggling off
-            if (!debugMode) {
-                selectedFaceIndex = -1;
-                document.getElementById('prop-controls').style.opacity = '0.5';
-                document.getElementById('prop-controls').style.pointerEvents = 'none';
-            }
+            if(!debugMode) { selectedFaceIndex=-1; document.getElementById('prop-controls').style.opacity='0.5'; document.getElementById('prop-controls').style.pointerEvents='none'; }
         }
-
         function updateProp(key, val) {
             if (selectedFaceIndex === -1) return;
-            const filterIndex = faceAssignments.get(selectedFaceIndex);
-            const filter = FILTERS[filterIndex];
-            const part = filter.parts[selectedPartIndex];
-            
-            // Update the live object
-            part[key] = parseFloat(val);
-            
-            // Update UI
-            if (key === 'scale') document.getElementById('val-scale').innerText = val;
-            if (key === 'offsetX') document.getElementById('val-offsetX').innerText = val;
-            if (key === 'offsetY') document.getElementById('val-offsetY').innerText = val;
-            if (key === 'rotation') document.getElementById('val-rotation').innerText = val;
-            
-            // Log for the user to copy
-            console.log(`Updated ${filter.id} [Part ${selectedPartIndex}]: Scale=${part.scale}, OffX=${part.offsetX}, OffY=${part.offsetY}, Rot=${part.rotation}`);
+            const f = FILTERS[faceAssignments.get(selectedFaceIndex)];
+            const p = f.parts[selectedPartIndex];
+            p[key] = parseFloat(val);
+            if(key==='scale')document.getElementById('val-scale').innerText=val;
+            if(key==='offsetX')document.getElementById('val-offsetX').innerText=val;
+            if(key==='offsetY')document.getElementById('val-offsetY').innerText=val;
+            if(key==='rotation')document.getElementById('val-rotation').innerText=val;
         }
-
         function changePart(dir) {
             if (selectedFaceIndex === -1) return;
-            const filterIndex = faceAssignments.get(selectedFaceIndex);
-            const filter = FILTERS[filterIndex];
-            
-            let newIndex = selectedPartIndex + dir;
-            if (newIndex < 0) newIndex = filter.parts.length - 1;
-            if (newIndex >= filter.parts.length) newIndex = 0;
-            
-            selectedPartIndex = newIndex;
-            refreshControlsUI();
+            const f = FILTERS[faceAssignments.get(selectedFaceIndex)];
+            let n = selectedPartIndex + dir;
+            if(n<0) n=f.parts.length-1; if(n>=f.parts.length) n=0;
+            selectedPartIndex=n; refreshControlsUI();
         }
-
         function refreshControlsUI() {
-            const filterIndex = faceAssignments.get(selectedFaceIndex);
-            const filter = FILTERS[filterIndex];
-            const part = filter.parts[selectedPartIndex];
-
-            // Update Name & Part Label
-            document.getElementById('edit-name').innerText = `${filter.id.toUpperCase()} (${part.id})`;
-            
+            const f = FILTERS[faceAssignments.get(selectedFaceIndex)];
+            const p = f.parts[selectedPartIndex];
+            document.getElementById('edit-name').innerText = `${f.id.toUpperCase()} (${p.id})`;
             const nav = document.getElementById('part-nav');
-            if (filter.parts.length > 1) {
-                nav.style.display = 'flex';
-                document.getElementById('part-label').innerText = `${selectedPartIndex + 1}/${filter.parts.length}`;
-            } else {
-                nav.style.display = 'none';
+            if(f.parts.length>1){ nav.style.display='flex'; document.getElementById('part-label').innerText=`${selectedPartIndex+1}/${f.parts.length}`; } else nav.style.display='none';
+            document.getElementById('in-scale').value=p.scale; document.getElementById('val-scale').innerText=p.scale;
+            document.getElementById('in-offsetX').value=p.offsetX||0; document.getElementById('val-offsetX').innerText=p.offsetX||0;
+            document.getElementById('in-offsetY').value=p.offsetY; document.getElementById('val-offsetY').innerText=p.offsetY;
+            document.getElementById('in-rotation').value=p.rotation||0; document.getElementById('val-rotation').innerText=p.rotation||0;
+        }
+        function activateControls(idx) { selectedFaceIndex=idx; selectedPartIndex=0; document.getElementById('prop-controls').style.opacity='1'; document.getElementById('prop-controls').style.pointerEvents='auto'; refreshControlsUI(); }
+
+        async function startApp() {
+            try {
+                if (typeof FaceMesh === 'undefined' || typeof Camera === 'undefined') throw new Error("MediaPipe failed to load.");
+                const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+                faceMesh.setOptions({maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+                faceMesh.onResults(onResults);
+                await loadAssets();
+                loadingText.innerText = "Requesting Camera...";
+                const cam = new Camera(videoElement, {onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, width:1280, height:720});
+                await cam.start();
+                loadingText.innerText = "Waiting for face...";
+            } catch (err) {
+                console.error(err);
+                loadingDiv.style.backgroundColor = 'rgba(255, 50, 50, 0.9)';
+                loadingDiv.innerHTML = `<strong>Error:</strong><br>${err.message}`;
             }
-
-            // Update Sliders
-            document.getElementById('in-scale').value = part.scale;
-            document.getElementById('val-scale').innerText = part.scale;
-            
-            // Handle X
-            const offX = part.offsetX || 0;
-            document.getElementById('in-offsetX').value = offX;
-            document.getElementById('val-offsetX').innerText = offX;
-
-            // Handle Y
-            document.getElementById('in-offsetY').value = part.offsetY;
-            document.getElementById('val-offsetY').innerText = part.offsetY;
-            
-            // Handle Rotation
-            const rot = part.rotation || 0;
-            document.getElementById('in-rotation').value = rot;
-            document.getElementById('val-rotation').innerText = rot;
         }
 
-        function activateControls(faceIndex) {
-            selectedFaceIndex = faceIndex;
-            selectedPartIndex = 0; // Reset to first part on new selection
-            
-            // Enable UI
-            const panel = document.getElementById('prop-controls');
-            panel.style.opacity = '1';
-            panel.style.pointerEvents = 'auto';
-            
-            refreshControlsUI();
-        }
-
-        // --- CORE LOGIC ---
+        // --- ASSET LOADER ---
         function loadAssets() {
             const promises = [];
             FILTERS.forEach(filter => {
@@ -259,7 +472,7 @@
                         const p = new Promise(resolve => {
                             img.onload = () => { loadedImages[part.id] = img; resolve(); };
                             img.onerror = () => { console.warn("Asset failed:", part.id); resolve(); };
-                            setTimeout(() => resolve(), 3000); // 3s Timeout
+                            setTimeout(() => resolve(), 3000); 
                         });
                         promises.push(p);
                     }
@@ -268,196 +481,7 @@
             return Promise.all(promises);
         }
 
-        function onResults(results) {
-            loadingDiv.style.display = 'none';
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
-
-            // Mirror
-            ctx.save();
-            ctx.translate(canvasElement.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-            detectedFaces = [];
-
-            if (results.multiFaceLandmarks) {
-                // Sort faces L-to-R
-                const sorted = results.multiFaceLandmarks.map((l, i) => ({ l, i, x: l[1].x })).sort((a,b) => a.x - b.x);
-
-                sorted.forEach((face, idx) => {
-                    const landmarks = face.l;
-                    
-                    // Assign Filter
-                    if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
-                    const filterIndex = faceAssignments.get(idx);
-                    const filter = FILTERS[filterIndex];
-
-                    // Draw All Parts
-                    filter.parts.forEach((part, partIdx) => {
-                        const isSelected = (debugMode && selectedFaceIndex === idx && selectedPartIndex === partIdx);
-                        drawSticker(ctx, part, landmarks, isSelected);
-                    });
-
-                    // Debug Overlay
-                    if (debugMode) drawDebugMarkers(ctx, landmarks, idx);
-
-                    // Click Hitbox
-                    detectedFaces.push({ id: idx, box: getBoundingBox(landmarks), filterIndex });
-                });
-            }
-            ctx.restore();
-        }
-
-        function drawSticker(ctx, part, landmarks, isSelected) {
-            const faceWidth = getFaceWidth(landmarks);
-            const angle = getFaceRoll(landmarks);
-            const anchor = landmarks[part.anchorIndex];
-            
-            const x = anchor.x * canvasElement.width;
-            const y = anchor.y * canvasElement.height;
-
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.scale(-1, 1); // Un-mirror text/images
-            
-            // Apply Face Rotation + Manual Adjustment
-            const manualRotRad = (part.rotation || 0) * (Math.PI / 180);
-            ctx.rotate(-angle + manualRotRad);
-            
-            const size = faceWidth * part.scale;
-
-            // Visual Highlight if selected
-            if (isSelected) {
-                ctx.globalAlpha = 0.8;
-                ctx.shadowColor = '#00ff88';
-                ctx.shadowBlur = 30;
-            }
-
-            // Defaults
-            const offX = part.offsetX || 0;
-            const offY = part.offsetY || 0;
-
-            if (part.type === 'emoji') {
-                ctx.font = `${size}px serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(part.content, offX, offY);
-            } else if (part.type === 'image') {
-                const img = loadedImages[part.id];
-                if (img) {
-                    const h = size * (img.height / img.width);
-                    ctx.drawImage(img, -size/2 + offX, -h/2 + offY, size, h);
-                }
-            }
-            ctx.restore();
-        }
-
-        function drawDebugMarkers(ctx, landmarks, faceId) {
-            const anchors = [
-                {id: 10, color: 'red'},   // Forehead
-                {id: 168, color: '#0f0'}, // Glasses/Eyes Center
-                {id: 1, color: 'orange'}, // Nose
-                {id: 152, color: 'cyan'}  // Chin
-            ];
-
-            ctx.save();
-            anchors.forEach(a => {
-                const pt = landmarks[a.id];
-                const x = pt.x * canvasElement.width;
-                const y = pt.y * canvasElement.height;
-                
-                ctx.beginPath();
-                ctx.arc(x, y, 4, 0, 2*Math.PI);
-                ctx.fillStyle = a.color;
-                ctx.fill();
-                
-                ctx.save();
-                ctx.translate(x, y);
-                ctx.scale(-1, 1); 
-                ctx.fillStyle = "white";
-                ctx.font = "bold 12px sans-serif";
-                ctx.fillText(a.id, 6, 4);
-                ctx.restore();
-            });
-            ctx.restore();
-        }
-
-        // --- MATH ---
-        function getFaceWidth(landmarks) {
-            const l = landmarks[234], r = landmarks[454];
-            return Math.sqrt(Math.pow(r.x - l.x, 2) + Math.pow(r.y - l.y, 2)) * canvasElement.width;
-        }
-        function getFaceRoll(landmarks) {
-            const l = landmarks[33], r = landmarks[263];
-            return Math.atan2(r.y - l.y, r.x - l.x);
-        }
-        function getBoundingBox(landmarks) {
-            let minX=1, minY=1, maxX=0, maxY=0;
-            landmarks.forEach(p => { 
-                if(p.x < minX) minX=p.x; if(p.x > maxX) maxX=p.x;
-                if(p.y < minY) minY=p.y; if(p.y > maxY) maxY=p.y;
-            });
-            return {minX, minY, maxX, maxY};
-        }
-
-        // --- INPUT ---
-        document.addEventListener('click', (e) => {
-            if (e.target.closest('#controls')) return;
-
-            const rect = canvasElement.getBoundingClientRect();
-            const normX = 1 - ((e.clientX - rect.left) / rect.width); // Mirror X
-            const normY = (e.clientY - rect.top) / rect.height;
-
-            detectedFaces.forEach(face => {
-                const b = face.box;
-                if (normX >= b.minX && normX <= b.maxX && normY >= b.minY && normY <= b.maxY) {
-                    
-                    if (debugMode) {
-                        activateControls(face.id);
-                    } else {
-                        // Normal mode: Swap Filter
-                        const next = (face.filterIndex + 1) % FILTERS.length;
-                        faceAssignments.set(face.id, next);
-                    }
-                }
-            });
-        });
-
-        // --- START ---
-        async function startApp() {
-            try {
-                if (typeof FaceMesh === 'undefined' || typeof Camera === 'undefined') {
-                    throw new Error("MediaPipe libraries failed to load.");
-                }
-
-                const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
-                faceMesh.setOptions({maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
-                faceMesh.onResults(onResults);
-                
-                await loadAssets();
-                
-                loadingText.innerText = "Requesting Camera...";
-                
-                const cam = new Camera(videoElement, {
-                    onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, 
-                    width:1280, 
-                    height:720
-                });
-                
-                await cam.start();
-                loadingText.innerText = "Waiting for face...";
-                
-            } catch (err) {
-                console.error(err);
-                spinner.style.display = 'none';
-                loadingDiv.style.backgroundColor = 'rgba(255, 50, 50, 0.9)';
-                loadingDiv.innerHTML = `<strong>Error:</strong><br>${err.message}`;
-            }
-        }
-
         startApp();
-
     </script>
 </body>
 </html>
