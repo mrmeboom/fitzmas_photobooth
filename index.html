@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D Sticker Booth (iPad Optimized)</title>
+    <title>3D Sticker Booth (Modern Mobile)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     
     <style>
-        body { margin: 0; background-color: #0d1117; font-family: sans-serif; overflow: hidden; height: 100vh; color: white; }
+        body { margin: 0; background-color: #000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; height: 100vh; color: white; }
         
         #scene-container {
             position: relative;
@@ -17,8 +17,7 @@
             overflow: hidden;
             background: #000;
             perspective: 800px; 
-            /* iOS Safari Hardware Acceleration Hint */
-            transform: translateZ(0);
+            transform: translateZ(0); /* Hardware accel */
         }
 
         canvas { 
@@ -33,49 +32,111 @@
             left: 0; top: 0;
             width: 100%; height: 100%;
             pointer-events: none;
-            /* WebKit prefixes for older iOS compatibility */
-            -webkit-perspective: 800px;
-            -webkit-transform-style: preserve-3d;
             transform-style: preserve-3d;
         }
 
         .sticker {
             position: absolute;
             top: 0; left: 0;
-            -webkit-transform-style: preserve-3d;
             transform-style: preserve-3d;
             will-change: transform;
             transform-origin: 0 0; 
-            /* Prevents flickering on iOS */
-            -webkit-backface-visibility: hidden;
-            backface-visibility: hidden;
+            backface-visibility: hidden; /* Clean edges */
         }
 
-        /* UI Styling */
+        /* --- UI LAYERS --- */
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20; }
         
-        #controls {
-            position: absolute; bottom: 20px; left: 20px; 
-            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 12px;
-            pointer-events: auto; min-width: 250px;
+        /* Shutter Button - Optimized for Thumb */
+        #shutter-btn {
+            position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+            width: 80px; height: 80px;
+            background: white; border-radius: 50%;
+            border: 4px solid rgba(255,255,255,0.3);
+            background-clip: padding-box;
+            cursor: pointer; pointer-events: auto;
+            z-index: 50;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
+        #shutter-btn:active { transform: translateX(-50%) scale(0.9); background: #ddd; }
+
+        /* Countdown */
+        #countdown {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 150px; font-weight: 800; color: white;
+            text-shadow: 0 4px 30px rgba(0,0,0,0.5);
+            display: none; z-index: 60;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Flash */
+        #flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: white; opacity: 0; pointer-events: none; z-index: 70;
+            transition: opacity 0.1s ease-out;
+        }
+
+        /* Result Modal */
+        #result-modal {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95); z-index: 80;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+        }
+        #result-img {
+            max-width: 90%; max-height: 65%;
+            border-radius: 16px; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            margin-bottom: 30px;
+            border: 2px solid #333;
+        }
+        .modal-btns { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .btn-action {
+            padding: 14px 28px; border-radius: 30px; border: none;
+            font-size: 16px; font-weight: 600; cursor: pointer;
+            color: white; transition: transform 0.1s;
+        }
+        .btn-action:active { transform: scale(0.95); }
+        .btn-save { background: #007AFF; color: white; box-shadow: 0 4px 15px rgba(0, 122, 255, 0.4); }
+        .btn-retake { background: #333; color: #ddd; }
+
+        /* Controls (Debug) - Compact */
+        #controls {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0,0,0,0.6); padding: 15px; border-radius: 12px;
+            pointer-events: auto; min-width: 250px;
+            transition: all 0.3s ease;
+            max-height: 60vh;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        #controls.minimized { width: auto; min-width: 0; padding: 8px; height: auto; overflow: hidden; }
+        #controls.minimized .control-content { display: none; }
+
+        .control-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
         .control-row { display: flex; justify-content: space-between; margin-bottom: 8px; align-items: center; }
-        input[type=range] { width: 120px; }
-        label { font-size: 12px; color: #aaa; }
-        button { background: #333; color: white; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+        input[type=range] { width: 100px; accent-color: #00ff88; }
+        label { font-size: 11px; color: #ccc; font-weight: 500; }
+        
+        button { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
         button.active { background: #00ff88; color: black; border-color: #00ff88; }
+        button.icon-btn { padding: 4px 10px; font-weight: bold; }
         
         .part-nav { display: flex; gap: 5px; align-items: center; }
-        .part-nav button { padding: 2px 8px; font-size: 10px; }
-
+        
         #loading { 
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            background: rgba(0,0,0,0.85); padding: 24px; border-radius: 16px; 
+            background: rgba(0,0,0,0.8); padding: 24px; border-radius: 20px; 
             text-align: center; max-width: 80%;
+            backdrop-filter: blur(5px);
         }
         .spinner {
-            width: 30px; height: 30px; border: 3px solid #555; border-top: 3px solid #00ff88; 
-            border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 10px auto;
+            width: 30px; height: 30px; border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #00ff88; 
+            border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 15px auto;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -88,45 +149,57 @@
         <div id="sticker-layer"></div>
     </div>
     
+    <div id="flash"></div>
+    <div id="countdown">3</div>
+
     <div id="ui-layer">
         <div id="loading">
             <div class="spinner"></div>
-            <div id="loading-text">Optimizing for iPad...</div>
+            <div id="loading-text">Loading Camera...</div>
         </div>
         
+        <button id="shutter-btn" onclick="startCountdown()"></button>
+
         <div id="controls">
-            <div class="control-row">
-                <span style="font-weight:bold; color:#00ff88">Designer Mode</span>
-                <button id="btn-debug" onclick="toggleDebug()">Debug: OFF</button>
+            <div class="control-header">
+                <span style="font-weight:bold; color:#00ff88; font-size:14px;">Designer Mode</span>
+                <div style="display:flex; gap:5px;">
+                    <button id="btn-debug" onclick="toggleDebug()">Debug</button>
+                    <button class="icon-btn" onclick="toggleUI()" id="btn-min">_</button>
+                </div>
             </div>
-            <hr style="border-color: #444; opacity: 0.5">
-            <div id="prop-controls" style="opacity: 0.5; pointer-events: none;">
-                <div class="control-row">
-                    <div style="font-size: 11px; color:#fff"><span id="edit-name">None</span></div>
-                    <div class="part-nav" id="part-nav" style="display:none">
-                        <button onclick="changePart(-1)">&lt;</button>
-                        <span id="part-label" style="font-size:10px">1/1</span>
-                        <button onclick="changePart(1)">&gt;</button>
+            <div class="control-content">
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 5px 0 10px 0;">
+                <div id="prop-controls" style="opacity: 0.5; pointer-events: none;">
+                    <div class="control-row">
+                        <div style="font-size: 11px; color:#fff"><span id="edit-name">None</span></div>
+                        <div class="part-nav" id="part-nav" style="display:none">
+                            <button onclick="changePart(-1)">&lt;</button>
+                            <span id="part-label" style="font-size:10px">1/1</span>
+                            <button onclick="changePart(1)">&gt;</button>
+                        </div>
                     </div>
-                </div>
-                
-                <div class="control-row">
-                    <label>Scale <span id="val-scale">1.0</span></label>
-                    <input type="range" min="0.1" max="5.0" step="0.1" id="in-scale" oninput="updateProp('scale', this.value)">
-                </div>
-                <div class="control-row">
-                    <label>Offset X <span id="val-offsetX">0</span></label>
-                    <input type="range" min="-300" max="300" step="5" id="in-offsetX" oninput="updateProp('offsetX', this.value)">
-                </div>
-                <div class="control-row">
-                    <label>Offset Y <span id="val-offsetY">0</span></label>
-                    <input type="range" min="-300" max="300" step="5" id="in-offsetY" oninput="updateProp('offsetY', this.value)">
-                </div>
-                <div class="control-row">
-                    <label>Rotate <span id="val-rotation">0</span>°</label>
-                    <input type="range" min="-180" max="180" step="5" id="in-rotation" oninput="updateProp('rotation', this.value)">
+                    <div class="control-row"><label>Scale <span id="val-scale">1.0</span></label><input type="range" min="0.1" max="5.0" step="0.1" id="in-scale" oninput="updateProp('scale', this.value)"></div>
+                    <div class="control-row"><label>Off X <span id="val-offsetX">0</span></label><input type="range" min="-300" max="300" step="5" id="in-offsetX" oninput="updateProp('offsetX', this.value)"></div>
+                    <div class="control-row"><label>Off Y <span id="val-offsetY">0</span></label><input type="range" min="-300" max="300" step="5" id="in-offsetY" oninput="updateProp('offsetY', this.value)"></div>
+                    <div class="control-row"><label>Off Z <span id="val-offsetZ">0</span></label><input type="range" min="-200" max="200" step="5" id="in-offsetZ" oninput="updateProp('offsetZ', this.value)"></div>
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 8px 0;">
+                    <div class="control-row"><label>Pitch <span id="val-rotationX">0</span>°</label><input type="range" min="-180" max="180" step="5" id="in-rotationX" oninput="updateProp('rotationX', this.value)"></div>
+                    <div class="control-row"><label>Yaw <span id="val-rotationY">0</span>°</label><input type="range" min="-180" max="180" step="5" id="in-rotationY" oninput="updateProp('rotationY', this.value)"></div>
+                    <div class="control-row"><label>Roll <span id="val-rotation">0</span>°</label><input type="range" min="-180" max="180" step="5" id="in-rotation" oninput="updateProp('rotation', this.value)"></div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Result Modal -->
+    <div id="result-modal">
+        <img id="result-img" src="" alt="Captured Photo">
+        <div class="modal-btns">
+            <button class="btn-action btn-retake" onclick="closeModal()">Retake</button>
+            <a id="download-link" download="photobooth_snap.jpg">
+                <button class="btn-action btn-save">Download</button>
+            </a>
         </div>
     </div>
 
@@ -134,41 +207,52 @@
         // --- CONFIGURATION ---
         const SMOOTHING = 0.2; 
 
+        // Current Filter Set
         const FILTERS = [
             {
-                id: 'santa',
+                id: 'marnix', 
                 parts: [
-                    { type: 'image', id: 'santa_beard', src: 'https://i.imgur.com/sDafmKM.png', anchorIndex: 152, scale: 1.6, offsetX: 0, offsetY: 30, rotation: 0, zIndex: 100 },
-                    { type: 'image', id: 'santa_hat', src: 'https://i.imgur.com/xE8op0x.png', anchorIndex: 10, scale: 2.0, offsetX: 0, offsetY: -100, rotation: 0, zIndex: 200 }
+                    { type: 'image', id: 'bandit_beard', src: 'https://i.imgur.com/1vVKJ91.png', anchorIndex: 152, scale: 1.6, offsetX: 0, offsetY: 0, offsetZ: 20, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 100 },
+                    { type: 'image', id: 'bandana', src: 'https://i.imgur.com/7mkFOI4.png', anchorIndex: 152, scale: 2.0, offsetX: 0, offsetY: 80, offsetZ: 10, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 90 },
+                    { type: 'image', id: 'cap', src: 'https://i.imgur.com/E7Loive.png', anchorIndex: 10, scale: 2.2, offsetX: 0, offsetY: -80, offsetZ: 30, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 200 }
                 ]
             },
             {
-                id: 'reindeer',
+                id: 'alex',
                 parts: [
-                    { type: 'image', id: 'antlers', src: 'https://i.imgur.com/CUThQ6s.png', anchorIndex: 10, scale: 2.5, offsetX: 0, offsetY: -80, rotation: 0, zIndex: 200 },
-                    { type: 'image', id: 'red_nose', src: 'https://i.imgur.com/LB5YQjz.png', anchorIndex: 1, scale: 0.6, offsetX: 0, offsetY: -10, rotation: 0, zIndex: 150 }
+                    { type: 'image', id: 'alex_glasses', src: 'https://i.imgur.com/r6svhAm.png', anchorIndex: 168, scale: 1.0, offsetX: 0, offsetY: 0, offsetZ: 20, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 200 },
+                    { type: 'image', id: 'alex_oil', src: 'https://i.imgur.com/QYEBVU1.png', anchorIndex: 454, scale: 1.5, offsetX: 120, offsetY: 50, offsetZ: 0, rotation: 10, rotationX: 0, rotationY: 0, zIndex: 100 }
                 ]
             },
             {
-                id: 'snowman',
+                id: 'floortje',
                 parts: [
-                    { type: 'image', id: 'scarf', src: 'https://i.imgur.com/Ylj2u9R.png', anchorIndex: 152, scale: 2.0, offsetX: 0, offsetY: 80, rotation: 0, zIndex: 90 },
-                    { type: 'image', id: 'tophat', src: 'https://i.imgur.com/4m28mqF.png', anchorIndex: 10, scale: 1.6, offsetX: 0, offsetY: -120, rotation: 0, zIndex: 200 },
-                    { type: 'image', id: 'carrot', src: 'https://i.imgur.com/6Ir5kls.png', anchorIndex: 1, scale: 0.8, offsetX: 0, offsetY: 10, rotation: 0, zIndex: 150 }
+                    { type: 'image', id: 'floortje_wig', src: 'https://i.imgur.com/it2jrUM.png', anchorIndex: 10, scale: 2.3, offsetX: 0, offsetY: -50, offsetZ: 20, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 200 },
+                    { type: 'image', id: 'floortje_necklace', src: 'https://i.imgur.com/lS9mKOb.png', anchorIndex: 152, scale: 1.8, offsetX: 0, offsetY: 60, offsetZ: 10, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 90 }
                 ]
             },
             {
-                id: 'elf',
+                id: 'raf',
                 parts: [
-                    { type: 'image', id: 'elf_ears', src: 'https://i.imgur.com/EuC4VsP.png', anchorIndex: 168, scale: 2.2, offsetX: 0, offsetY: -20, rotation: 0, zIndex: 100 },
-                    { type: 'image', id: 'elf_hat', src: 'https://i.imgur.com/qXyP0PS.png', anchorIndex: 10, scale: 1.8, offsetX: 0, offsetY: -100, rotation: 0, zIndex: 200 }
+                    { type: 'image', id: 'raf_mask', src: 'https://i.imgur.com/dFJxaVq.png', anchorIndex: 168, scale: 2.0, offsetX: 0, offsetY: 10, offsetZ: 30, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 150 }
                 ]
             },
             {
-                id: 'bandit',
+                id: 'mischa',
                 parts: [
-                    { type: 'image', id: 'bandana', src: 'https://i.imgur.com/7mkFOI4.png', anchorIndex: 152, scale: 2.0, offsetX: 0, offsetY: 80, rotation: 0, zIndex: 90 },
-                    { type: 'image', id: 'cap', src: 'https://i.imgur.com/Ms2Wudi.png', anchorIndex: 10, scale: 2.2, offsetX: 0, offsetY: -80, rotation: 0, zIndex: 200 }
+                    { type: 'image', id: 'mischa_sweater', src: 'https://i.imgur.com/jpKunad.png', anchorIndex: 152, scale: 2.8, offsetX: 0, offsetY: 180, offsetZ: 0, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 50 }
+                ]
+            },
+            {
+                id: 'derk',
+                parts: [
+                    { type: 'image', id: 'derk_head', src: 'https://i.imgur.com/3rAuZew.png', anchorIndex: 10, scale: 2.1, offsetX: 0, offsetY: -30, offsetZ: 20, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 200 }
+                ]
+            },
+            {
+                id: 'jur',
+                parts: [
+                    { type: 'image', id: 'jur_tall', src: 'https://i.imgur.com/4Vs89Aj.png', anchorIndex: 1, scale: 4.0, offsetX: 0, offsetY: -400, offsetZ: 50, rotation: 0, rotationX: 0, rotationY: 0, zIndex: 200 }
                 ]
             }
         ];
@@ -181,6 +265,7 @@
         let detectedFaces = [];
         let faceStates = []; 
         let loadedImages = {};
+        let activeFaceData = []; 
 
         // --- ELEMENTS ---
         const videoElement = document.getElementById('input_video');
@@ -190,59 +275,40 @@
         const loadingDiv = document.getElementById('loading');
         const loadingText = document.getElementById('loading-text');
 
-        // --- VECTOR MATH (MATRIX ENGINE) ---
-        
-        // Float rounding helper for older iOS CSS parsing
+        // --- VECTOR MATH ---
         const f = (n) => n.toFixed(4);
-
         function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
         function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
         function normalize(v) {
             const mag = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) || 1;
             return { x: v.x/mag, y: v.y/mag, z: v.z/mag };
         }
-
-        // Project landmarks into Mirror Space (x flipped) and Pixels
         function getMirroredPoint(landmark, width, height) {
             return {
-                x: (1 - landmark.x) * width, // Mirror X
+                x: (1 - landmark.x) * width, 
                 y: landmark.y * height,
-                z: -landmark.z * width // MediaPipe Z is normalized. Scale it. Negate it to match CSS "out of screen"
+                z: -landmark.z * width 
             };
         }
-
-        // Calculate the 3x3 Rotation Matrix Basis Vectors
         function calculateFaceMatrix(landmarks, width, height) {
-            // Anchor Points
-            const eyeL = getMirroredPoint(landmarks[33], width, height); // Outer Left
-            const eyeR = getMirroredPoint(landmarks[263], width, height); // Outer Right
-            const mouth = getMirroredPoint(landmarks[13], width, height); // Upper Lip
+            const eyeL = getMirroredPoint(landmarks[33], width, height); 
+            const eyeR = getMirroredPoint(landmarks[263], width, height); 
+            const mouth = getMirroredPoint(landmarks[13], width, height); 
             
-            // 1. X-Axis (Right Direction): Eye Left to Eye Right
             const vecX = normalize(subtract(eyeL, eyeR));
-
-            // 2. Temp Y (Down Direction): Mid-Eye to Mouth
             const midEye = { x: (eyeL.x + eyeR.x)/2, y: (eyeL.y + eyeR.y)/2, z: (eyeL.z + eyeR.z)/2 };
             const vecY_temp = normalize(subtract(mouth, midEye));
-
-            // 3. Z-Axis (Forward/Normal): Cross Product X and Y
             const vecZ = normalize(cross(vecX, vecY_temp));
-
-            // 4. Corrected Y-Axis: Cross Z and X
             const vecY = normalize(cross(vecZ, vecX));
 
             return { x: vecX, y: vecY, z: vecZ };
         }
-
         function lerp(start, end, amt) { return (1 - amt) * start + amt * end; }
-        
-        // Helper to lerp a full vector
         function lerpVector(v1, v2, amt) {
             return { x: lerp(v1.x, v2.x, amt), y: lerp(v1.y, v2.y, amt), z: lerp(v1.z, v2.z, amt) };
         }
 
         // --- RENDERING ---
-        
         function getStickerElement(faceId, partId, src, type, zIndex) {
             const id = `sticker-${faceId}-${partId}`;
             let el = document.getElementById(id);
@@ -266,17 +332,23 @@
 
         function onResults(results) {
             loadingDiv.style.display = 'none';
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
+            
+            // High DPI Canvas Handling for crisp photos
+            const dpr = window.devicePixelRatio || 1;
+            canvasElement.width = window.innerWidth * dpr;
+            canvasElement.height = window.innerHeight * dpr;
 
+            // Draw Video (Mirrored)
             ctx.save();
             ctx.translate(canvasElement.width, 0);
             ctx.scale(-1, 1);
+            // Draw video to fill the high-dpi canvas
             ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
             ctx.restore();
 
             detectedFaces = [];
-            const currentStickerIds = new Set(); 
+            const currentStickerIds = new Set();
+            activeFaceData = [];
 
             if (results.multiFaceLandmarks) {
                 const sorted = results.multiFaceLandmarks.map((l, i) => ({ l, i, x: l[1].x })).sort((a,b) => a.x - b.x);
@@ -285,40 +357,31 @@
 
                 sorted.forEach((face, idx) => {
                     const landmarks = face.l;
-                    
                     if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
                     const filterIndex = faceAssignments.get(idx);
                     const filter = FILTERS[filterIndex];
 
-                    // --- CALCULATION ---
+                    // Calculations based on High-DPI canvas size
                     const targetWidth = Math.abs(landmarks[454].x - landmarks[234].x) * canvasElement.width; 
-                    
-                    // Get the pure rotation vectors (Mirror corrected)
                     const matrixBasis = calculateFaceMatrix(landmarks, canvasElement.width, canvasElement.height);
                     
                     if (!faceStates[idx]) {
-                        faceStates[idx] = { 
-                            w: targetWidth, 
-                            basis: matrixBasis,
-                            anchors: {} 
-                        };
+                        faceStates[idx] = { w: targetWidth, basis: matrixBasis, anchors: {} };
                     }
 
                     const state = faceStates[idx];
                     state.w = lerp(state.w, targetWidth, SMOOTHING);
-                    
-                    // Smooth the basis vectors
                     state.basis.x = lerpVector(state.basis.x, matrixBasis.x, SMOOTHING);
                     state.basis.y = lerpVector(state.basis.y, matrixBasis.y, SMOOTHING);
                     state.basis.z = lerpVector(state.basis.z, matrixBasis.z, SMOOTHING);
+
+                    const faceSnapshotParts = [];
 
                     filter.parts.forEach((part, partIdx) => {
                         const el = getStickerElement(idx, part.id, part.src || part.content, part.type, part.zIndex);
                         currentStickerIds.add(el.id);
 
                         const isSelected = (debugMode && selectedFaceIndex === idx && selectedPartIndex === partIdx);
-
-                        // Position: Mirror X, Scale Z
                         const rawAnchor = getMirroredPoint(landmarks[part.anchorIndex], canvasElement.width, canvasElement.height);
 
                         if (!state.anchors[part.anchorIndex]) state.anchors[part.anchorIndex] = rawAnchor;
@@ -327,14 +390,10 @@
                         smoothAnchor.y = lerp(smoothAnchor.y, rawAnchor.y, SMOOTHING);
                         smoothAnchor.z = lerp(smoothAnchor.z, rawAnchor.z, SMOOTHING);
 
-                        // --- MATRIX CONSTRUCTION ---
-                        // matrix3d(a1, b1, c1, d1, a2, b2, c2, d2, a3, b3, c3, d3, a4, b4, c4, d4)
-                        // Vectors are columns.
                         const X = state.basis.x;
                         const Y = state.basis.y;
                         const Z = state.basis.z;
                         
-                        // 1. Build the Matrix String (Truncated for old iOS stability)
                         const rotationMatrix = `matrix3d(
                             ${f(X.x)}, ${f(X.y)}, ${f(X.z)}, 0,
                             ${f(Y.x)}, ${f(Y.y)}, ${f(Y.z)}, 0,
@@ -342,27 +401,47 @@
                             0, 0, 0, 1
                         )`;
 
-                        // 2. Offsets
-                        const offX = part.offsetX || 0;
-                        const offY = part.offsetY || 0;
-                        const manualRot = (part.rotation || 0);
+                        const cssScale = 1 / dpr; // Scale down for CSS display
+                        
+                        const offX = (part.offsetX || 0) * dpr;
+                        const offY = (part.offsetY || 0) * dpr;
+                        const offZ = (part.offsetZ || 20) * dpr;
+                        const rotX = part.rotationX || 0;
+                        const rotY = part.rotationY || 0;
+                        const rotZ = part.rotation || 0; 
 
-                        // 3. Compose Transform
                         el.style.transform = `
-                            translate3d(${f(smoothAnchor.x)}px, ${f(smoothAnchor.y)}px, ${f(smoothAnchor.z)}px)
+                            translate3d(${f(smoothAnchor.x * cssScale)}px, ${f(smoothAnchor.y * cssScale)}px, ${f(smoothAnchor.z * cssScale)}px)
                             ${rotationMatrix}
-                            rotateZ(${manualRot}deg)
-                            translate(${offX}px, ${offY}px)
+                            translateZ(${offZ * cssScale}px)
+                            rotateX(${rotX}deg)
+                            rotateY(${rotY}deg)
+                            rotateZ(${rotZ}deg)
+                            translate(${offX * cssScale}px, ${offY * cssScale}px)
                             translate(-50%, -50%)
                         `;
                         
-                        const size = state.w * part.scale;
-                        el.style.width = `${size}px`;
+                        const size = state.w * part.scale; // Canvas pixel size
+                        el.style.width = `${size * cssScale}px`; // CSS pixel size
                         el.style.height = "auto"; 
-                        
                         el.style.filter = isSelected ? "drop-shadow(0 0 10px #00ff88) brightness(1.2)" : "none";
                         el.style.display = 'block';
+
+                        // Store HIGH RES data for snapshot
+                        const simpleRoll = Math.atan2(X.y, X.x) + (rotZ * Math.PI/180);
+                        faceSnapshotParts.push({
+                            id: part.id, // Store ID for instant lookup
+                            src: part.src || part.content,
+                            type: part.type,
+                            x: smoothAnchor.x + offX, 
+                            y: smoothAnchor.y + offY,
+                            scale: size,
+                            rotation: simpleRoll,
+                            zIndex: part.zIndex
+                        });
                     });
+
+                    activeFaceData.push(faceSnapshotParts);
 
                     if (debugMode) drawDebugMarkers(ctx, landmarks);
                     detectedFaces.push({ id: idx, box: getBoundingBox(landmarks), filterIndex });
@@ -373,6 +452,85 @@
                     if (!currentStickerIds.has(el.id)) el.style.display = 'none';
                 });
             }
+        }
+
+        // --- SNAPSHOT LOGIC ---
+        
+        function startCountdown() {
+            document.getElementById('shutter-btn').style.display = 'none';
+            document.getElementById('controls').style.display = 'none';
+            const countEl = document.getElementById('countdown');
+            countEl.style.display = 'block';
+            
+            let count = 3;
+            countEl.innerText = count;
+            
+            const timer = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countEl.innerText = count;
+                } else {
+                    clearInterval(timer);
+                    countEl.style.display = 'none';
+                    triggerFlash();
+                    takeSnapshot();
+                }
+            }, 1000);
+        }
+
+        function triggerFlash() {
+            const flash = document.getElementById('flash');
+            flash.style.opacity = 1;
+            setTimeout(() => { flash.style.opacity = 0; }, 100);
+        }
+
+        function takeSnapshot() {
+            const snapCanvas = document.createElement('canvas');
+            snapCanvas.width = canvasElement.width;
+            snapCanvas.height = canvasElement.height;
+            const snapCtx = snapCanvas.getContext('2d');
+
+            // 1. Draw Video
+            snapCtx.drawImage(canvasElement, 0, 0);
+
+            // 2. Draw Stickers (Instant Draw using Loaded Cache)
+            let allParts = [];
+            activeFaceData.forEach(parts => { allParts = allParts.concat(parts); });
+            allParts.sort((a, b) => a.zIndex - b.zIndex);
+
+            allParts.forEach(part => {
+                if (part.type === 'image') {
+                    // Use pre-loaded image from cache
+                    const img = loadedImages[part.id];
+                    
+                    if (img && img.complete) {
+                        snapCtx.save();
+                        snapCtx.translate(part.x, part.y);
+                        snapCtx.rotate(part.rotation);
+                        
+                        const aspect = img.height / img.width;
+                        const drawW = part.scale;
+                        const drawH = part.scale * aspect;
+                        
+                        snapCtx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
+                        snapCtx.restore();
+                    }
+                }
+            });
+
+            // 3. Output
+            const dataURL = snapCanvas.toDataURL('image/jpeg', 0.9);
+            const imgEl = document.getElementById('result-img');
+            imgEl.src = dataURL;
+            
+            document.getElementById('download-link').href = dataURL;
+            document.getElementById('result-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('result-modal').style.display = 'none';
+            document.getElementById('shutter-btn').style.display = 'block';
+            document.getElementById('controls').style.display = 'block';
         }
 
         // --- UTILS ---
@@ -393,14 +551,15 @@
                 const pt = landmarks[a.id];
                 const x = pt.x * canvasElement.width;
                 const y = pt.y * canvasElement.height;
-                ctx.beginPath(); ctx.arc(x, y, 4, 0, 2*Math.PI); ctx.fillStyle = a.color; ctx.fill();
+                ctx.beginPath(); ctx.arc(x, y, 4 * window.devicePixelRatio, 0, 2*Math.PI); ctx.fillStyle = a.color; ctx.fill();
             });
             ctx.restore();
         }
 
         document.addEventListener('click', (e) => {
-            if (e.target.closest('#controls')) return;
+            if (e.target.closest('#controls') || e.target.closest('#shutter-btn') || e.target.closest('#result-modal')) return;
             const rect = canvasElement.getBoundingClientRect();
+            // Normalized touch coords (0-1)
             const normX = 1 - ((e.clientX - rect.left) / rect.width);
             const normY = (e.clientY - rect.top) / rect.height;
             detectedFaces.forEach(face => {
@@ -415,6 +574,14 @@
             });
         });
 
+        // --- UI LOGIC ---
+        function toggleUI() {
+            const c = document.getElementById('controls');
+            const btn = document.getElementById('btn-min');
+            c.classList.toggle('minimized');
+            btn.innerText = c.classList.contains('minimized') ? '+' : '_';
+        }
+
         function toggleDebug() {
             debugMode = !debugMode;
             const btn = document.getElementById('btn-debug');
@@ -422,16 +589,16 @@
             btn.classList.toggle('active', debugMode);
             if(!debugMode) { selectedFaceIndex=-1; document.getElementById('prop-controls').style.opacity='0.5'; document.getElementById('prop-controls').style.pointerEvents='none'; }
         }
+        
         function updateProp(key, val) {
             if (selectedFaceIndex === -1) return;
             const f = FILTERS[faceAssignments.get(selectedFaceIndex)];
             const p = f.parts[selectedPartIndex];
             p[key] = parseFloat(val);
-            if(key==='scale')document.getElementById('val-scale').innerText=val;
-            if(key==='offsetX')document.getElementById('val-offsetX').innerText=val;
-            if(key==='offsetY')document.getElementById('val-offsetY').innerText=val;
-            if(key==='rotation')document.getElementById('val-rotation').innerText=val;
+            if(document.getElementById(`val-${key}`)) document.getElementById(`val-${key}`).innerText=val;
+            console.log(`Updated ${f.id} Part ${selectedPartIndex}:`, p);
         }
+        
         function changePart(dir) {
             if (selectedFaceIndex === -1) return;
             const f = FILTERS[faceAssignments.get(selectedFaceIndex)];
@@ -439,44 +606,24 @@
             if(n<0) n=f.parts.length-1; if(n>=f.parts.length) n=0;
             selectedPartIndex=n; refreshControlsUI();
         }
+        
         function refreshControlsUI() {
             const f = FILTERS[faceAssignments.get(selectedFaceIndex)];
             const p = f.parts[selectedPartIndex];
             document.getElementById('edit-name').innerText = `${f.id.toUpperCase()} (${p.id})`;
             const nav = document.getElementById('part-nav');
             if(f.parts.length>1){ nav.style.display='flex'; document.getElementById('part-label').innerText=`${selectedPartIndex+1}/${f.parts.length}`; } else nav.style.display='none';
-            document.getElementById('in-scale').value=p.scale; document.getElementById('val-scale').innerText=p.scale;
-            document.getElementById('in-offsetX').value=p.offsetX||0; document.getElementById('val-offsetX').innerText=p.offsetX||0;
-            document.getElementById('in-offsetY').value=p.offsetY; document.getElementById('val-offsetY').innerText=p.offsetY;
-            document.getElementById('in-rotation').value=p.rotation||0; document.getElementById('val-rotation').innerText=p.rotation||0;
+            
+            const set = (k, def) => {
+                const val = p[k] !== undefined ? p[k] : def;
+                document.getElementById(`in-${k}`).value = val;
+                document.getElementById(`val-${k}`).innerText = val;
+            };
+            set('scale', 1.0); set('offsetX', 0); set('offsetY', 0); set('offsetZ', 20);
+            set('rotation', 0); set('rotationX', 0); set('rotationY', 0);
         }
+        
         function activateControls(idx) { selectedFaceIndex=idx; selectedPartIndex=0; document.getElementById('prop-controls').style.opacity='1'; document.getElementById('prop-controls').style.pointerEvents='auto'; refreshControlsUI(); }
-
-        async function startApp() {
-            try {
-                if (typeof FaceMesh === 'undefined' || typeof Camera === 'undefined') throw new Error("MediaPipe failed to load.");
-                const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
-                faceMesh.setOptions({maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
-                faceMesh.onResults(onResults);
-                await loadAssets();
-                loadingText.innerText = "Requesting Camera...";
-                
-                // PERFORMANCE FIX: Request 640x480 (VGA) instead of 720p
-                // This is the native aspect ratio for iPads and much lighter on the A9 chip
-                const cam = new Camera(videoElement, {
-                    onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, 
-                    width: 640, 
-                    height: 480 
-                });
-                
-                await cam.start();
-                loadingText.innerText = "Waiting for face...";
-            } catch (err) {
-                console.error(err);
-                loadingDiv.style.backgroundColor = 'rgba(255, 50, 50, 0.9)';
-                loadingDiv.innerHTML = `<strong>Error:</strong><br>${err.message}`;
-            }
-        }
 
         // --- ASSET LOADER ---
         function loadAssets() {
@@ -497,6 +644,31 @@
                 });
             });
             return Promise.all(promises);
+        }
+
+        async function startApp() {
+            try {
+                if (typeof FaceMesh === 'undefined' || typeof Camera === 'undefined') throw new Error("MediaPipe failed to load.");
+                const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+                faceMesh.setOptions({maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+                faceMesh.onResults(onResults);
+                await loadAssets();
+                loadingText.innerText = "Requesting Camera...";
+                
+                // RESTORED HD QUALITY
+                const cam = new Camera(videoElement, {
+                    onFrame: async()=>{ await faceMesh.send({image:videoElement}); }, 
+                    width: 1280, 
+                    height: 720 
+                });
+                
+                await cam.start();
+                loadingText.innerText = "Waiting for face...";
+            } catch (err) {
+                console.error(err);
+                loadingDiv.style.backgroundColor = 'rgba(255, 50, 50, 0.9)';
+                loadingDiv.innerHTML = `<strong>Error:</strong><br>${err.message}`;
+            }
         }
 
         startApp();
