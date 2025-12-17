@@ -211,11 +211,12 @@
         /* Result Modal */
         #result-modal {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            /* Changed to transparent so the WebGL background shows through clearly */
-            background: transparent; 
+            /* Transparent to show WebGL background */
+            background: transparent;
             z-index: 80;
             display: none; flex-direction: column; align-items: center; justify-content: center;
             pointer-events: auto;
+            backdrop-filter: blur(0px); /* Removed blur to keep BG sharp */
         }
         #result-img {
             max-width: 90%; max-height: 55%;
@@ -360,7 +361,6 @@
         precision mediump float;
         uniform vec2 u_resolution;
         uniform float u_time;
-        // Simplex 3D Noise (Compact)
         vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
         vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
         vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
@@ -569,14 +569,23 @@
         function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
         function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
         function normalize(v) { const mag = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) || 1; return { x: v.x/mag, y: v.y/mag, z: v.z/mag }; }
-        function getMirroredPoint(l, w, h) { return { x: (1 - l.x) * w, y: l.y * h, z: -l.z * w }; }
+        
+        // SIMPLIFIED MAPPING: Map 0-1 video coords to screen pixels directly (No DPR complexity)
+        function getMirroredPoint(l, w, h, offX = 0, offY = 0) { 
+            return { 
+                x: (1 - l.x) * w + offX, 
+                y: l.y * h + offY, 
+                z: -l.z * w 
+            }; 
+        }
+        
         function lerp(s, e, a) { return (1 - a) * s + a * e; }
         function lerpVector(v1, v2, a) { return { x: lerp(v1.x, v2.x, a), y: lerp(v1.y, v2.y, a), z: lerp(v1.z, v2.z, a) }; }
 
-        function calculateFaceMatrix(landmarks, width, height) {
-            const eyeL = getMirroredPoint(landmarks[33], width, height);
-            const eyeR = getMirroredPoint(landmarks[263], width, height);
-            const mouth = getMirroredPoint(landmarks[13], width, height);
+        function calculateFaceMatrix(landmarks, width, height, offX, offY) {
+            const eyeL = getMirroredPoint(landmarks[33], width, height, offX, offY);
+            const eyeR = getMirroredPoint(landmarks[263], width, height, offX, offY);
+            const mouth = getMirroredPoint(landmarks[13], width, height, offX, offY);
             const vecX = normalize(subtract(eyeL, eyeR));
             const midEye = { x: (eyeL.x + eyeR.x)/2, y: (eyeL.y + eyeR.y)/2, z: (eyeL.z + eyeR.z)/2 };
             const vecY_raw = normalize(subtract(mouth, midEye));
@@ -586,7 +595,7 @@
         }
 
         function getStickerElement(faceId, partId, src, type, zIndex) {
-            if (!stickerLayer) return null; // Guard
+            if (!stickerLayer) return null; 
             const id = `sticker-${faceId}-${partId}`;
             let el = document.getElementById(id);
             if (!el) {
@@ -600,17 +609,32 @@
         }
 
         function onResults(results) {
-            if (loadingDiv) loadingDiv.style.display = 'none'; // Guard check
+            if (loadingDiv) loadingDiv.style.display = 'none'; 
             if (!canvasElement) return;
 
-            const dpr = window.devicePixelRatio || 1;
-            canvasElement.width = window.innerWidth * dpr;
-            canvasElement.height = window.innerHeight * dpr;
+            // 1. Set Canvas to EXACT Window Size (Logical Pixels)
+            // This aligns coordinate systems and fixes the "Tiny" issue on Retina
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
 
+            // 2. Calculate Center Crop (Cover) logic
+            const screenW = canvasElement.width;
+            const screenH = canvasElement.height;
+            const videoW = results.image.width;
+            const videoH = results.image.height;
+
+            const ratio = Math.max(screenW / videoW, screenH / videoH);
+            const scaledW = videoW * ratio;
+            const scaledH = videoH * ratio;
+            const offX = (screenW - scaledW) / 2;
+            const offY = (screenH - scaledH) / 2;
+
+            // 3. Draw Video Centered & Mirrored
             ctx.save();
-            ctx.translate(canvasElement.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            ctx.translate(screenW, 0); // Move origin to right edge
+            ctx.scale(-1, 1); // Flip X
+            // Draw image in mirrored context
+            ctx.drawImage(results.image, offX, offY, scaledW, scaledH);
             ctx.restore();
 
             detectedFaces = [];
@@ -626,12 +650,23 @@
                     if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
                     const filter = FILTERS[faceAssignments.get(idx)];
 
-                    const targetWidth = Math.abs(landmarks[454].x - landmarks[234].x) * canvasElement.width;
-                    const matrixBasis = calculateFaceMatrix(landmarks, canvasElement.width, canvasElement.height);
+                    // Calculate Un-Projected Width to stop shrinking on rotation
+                    const targetWidthRaw = Math.abs(landmarks[454].x - landmarks[234].x) * scaledW;
                     
-                    if (!faceStates[idx]) faceStates[idx] = { w: targetWidth, basis: matrixBasis, anchors: {} };
+                    // 1. Get raw orientation 
+                    const matrixBasis = calculateFaceMatrix(landmarks, scaledW, scaledH, offX, offY);
+                    
+                    // 2. Extract Yaw
+                    const yaw = Math.atan2(-matrixBasis.z.x, matrixBasis.z.z);
+                    
+                    // 3. Compensate for foreshortening
+                    const cosYaw = Math.max(Math.abs(Math.cos(yaw)), 0.2); 
+                    const unprojectedWidth = targetWidthRaw / cosYaw;
+
+                    if (!faceStates[idx]) faceStates[idx] = { w: unprojectedWidth, basis: matrixBasis, anchors: {} };
                     const state = faceStates[idx];
-                    state.w = lerp(state.w, targetWidth, SMOOTHING);
+                    
+                    state.w = lerp(state.w, unprojectedWidth, SMOOTHING);
                     state.basis.x = lerpVector(state.basis.x, matrixBasis.x, SMOOTHING);
                     state.basis.y = lerpVector(state.basis.y, matrixBasis.y, SMOOTHING);
                     state.basis.z = lerpVector(state.basis.z, matrixBasis.z, SMOOTHING);
@@ -639,45 +674,48 @@
                     const faceParts = [];
                     filter.parts.forEach((part, partIdx) => {
                         const el = getStickerElement(idx, part.id, part.src || part.content, part.type, part.zIndex);
-                        if (!el) return; // Guard
+                        if (!el) return; 
                         
                         currentStickerIds.add(el.id);
                         
-                        const rawAnchor = getMirroredPoint(landmarks[part.anchorIndex], canvasElement.width, canvasElement.height);
+                        // Use SCALED dims + OFFSETS for positioning
+                        const rawAnchor = getMirroredPoint(landmarks[part.anchorIndex], scaledW, scaledH, offX, offY);
+                        
                         if (!state.anchors[part.anchorIndex]) state.anchors[part.anchorIndex] = rawAnchor;
                         const smoothAnchor = state.anchors[part.anchorIndex];
                         smoothAnchor.x = lerp(smoothAnchor.x, rawAnchor.x, SMOOTHING);
                         smoothAnchor.y = lerp(smoothAnchor.y, rawAnchor.y, SMOOTHING);
                         smoothAnchor.z = lerp(smoothAnchor.z, rawAnchor.z, SMOOTHING);
 
-                        const cssScale = 1 / dpr; 
-                        const logicalFaceWidth = state.w / dpr;
+                        // CSS Scale is 1:1 now
+                        const cssScale = 1; 
+                        
+                        const logicalFaceWidth = state.w; 
                         const depthScale = logicalFaceWidth / REFERENCE_FACE_WIDTH;
                         
                         const X = state.basis.x, Y = state.basis.y, Z = state.basis.z;
                         const rotationMatrix = `matrix3d(${f(X.x)},${f(X.y)},${f(X.z)},0,${f(Y.x)},${f(Y.y)},${f(Y.z)},0,${f(Z.x)},${f(Z.y)},${f(Z.z)},0,0,0,0,1)`;
                         
                         el.style.transform = `
-                            translate3d(${f(smoothAnchor.x*cssScale)}px, ${f(smoothAnchor.y*cssScale)}px, ${f(smoothAnchor.z*cssScale)}px)
+                            translate3d(${f(smoothAnchor.x)}px, ${f(smoothAnchor.y)}px, ${f(smoothAnchor.z)}px)
                             ${rotationMatrix}
-                            translateZ(${(part.offsetZ||20)*dpr*depthScale*cssScale}px)
+                            translateZ(${(part.offsetZ||20)*depthScale}px)
                             rotateX(${part.rotationX||0}deg) rotateY(${part.rotationY||0}deg) rotateZ(${part.rotation||0}deg)
-                            translate(${(part.offsetX||0)*dpr*depthScale*cssScale}px, ${(part.offsetY||0)*dpr*depthScale*cssScale}px)
+                            translate(${(part.offsetX||0)*depthScale}px, ${(part.offsetY||0)*depthScale}px)
                             translate(-50%, -50%)
                         `;
                         const size = state.w * part.scale;
-                        el.style.width = `${size * cssScale}px`; el.style.height = "auto";
+                        el.style.width = `${size}px`; el.style.height = "auto";
                         el.style.filter = (debugMode && selectedFaceIndex===idx && selectedPartIndex===partIdx) ? "drop-shadow(0 0 10px #00ff88) brightness(1.2)" : "none";
                         el.style.display = 'block';
 
-                        // Calculate Simple 2D Rotation for Snapshot (Roll)
                         const simpleRoll = Math.atan2(X.y, X.x) + ((part.rotation||0) * Math.PI/180);
-                        faceParts.push({ id: part.id, type: part.type, src: part.src, x: smoothAnchor.x + (part.offsetX||0)*dpr*depthScale, y: smoothAnchor.y + (part.offsetY||0)*dpr*depthScale, scale: size, rotation: simpleRoll, zIndex: part.zIndex });
+                        faceParts.push({ id: part.id, type: part.type, src: part.src, x: smoothAnchor.x + (part.offsetX||0)*depthScale, y: smoothAnchor.y + (part.offsetY||0)*depthScale, scale: size, rotation: simpleRoll, zIndex: part.zIndex });
                     });
                     activeFaceData.push(faceParts);
                     
-                    if(debugMode) drawDebugMarkers(ctx, landmarks);
-                    detectedFaces.push({ id: idx, box: getBoundingBox(landmarks), filterIndex: faceAssignments.get(idx) });
+                    if(debugMode) drawDebugMarkers(ctx, landmarks, scaledW, scaledH, offX, offY);
+                    detectedFaces.push({ id: idx, box: getBoundingBox(landmarks, scaledW, scaledH, offX, offY), filterIndex: faceAssignments.get(idx) });
                 });
                 
                 document.querySelectorAll('.sticker').forEach(el => { if(!currentStickerIds.has(el.id)) el.style.display='none'; });
@@ -775,6 +813,7 @@
             // Show Modal and hide Video to reveal background
             document.getElementById('result-modal').style.display = 'flex';
             document.getElementById('scene-container').style.opacity = '0'; // Hide video so background shows
+            document.getElementById('app-title-overlay').style.display = 'none'; // Hide Title
             createBurst(); // Festive burst!
 
             // Auto Upload
@@ -785,6 +824,7 @@
             document.getElementById('result-modal').style.display = 'none';
             document.getElementById('scene-container').style.opacity = '1'; // Show video again
             document.getElementById('shutter-btn').style.display = 'block';
+            document.getElementById('app-title-overlay').style.display = 'block'; // Show Title
         }
 
         // --- CLOUD ---
@@ -837,8 +877,81 @@
         });
 
         // Debug UI Updaters
-        function getBoundingBox(l) { let minX=1, minY=1, maxX=0, maxY=0; l.forEach(p=>{if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y;}); return {minX,minY,maxX,maxY}; }
-        function drawDebugMarkers(ctx, l) { ctx.save(); ctx.translate(canvasElement.width,0); ctx.scale(-1,1); [10,168,1,152].forEach(id=>{const p=l[id]; ctx.beginPath(); ctx.arc(p.x*canvasElement.width, p.y*canvasElement.height, 4, 0, 2*Math.PI); ctx.fillStyle='red'; ctx.fill();}); ctx.restore(); }
+        // UPDATED: Now accepts scaled dims and offsets
+        function getBoundingBox(l, w, h, offX, offY) { 
+            let minX=1, minY=1, maxX=0, maxY=0; 
+            // Loop through all landmarks to find bounding box in 0-1 space (video space)
+            // But we need to map to 0-1 Screen Space for click detection
+            // Video Space (0-1) -> Screen Pixel Space (via getMirroredPoint logic) -> Screen Normalized (0-1)
+            
+            // Wait, click detection is normalized 0-1 of the SCREEN.
+            // We need to convert landmarks to Screen Pixels first.
+            
+            let minScreenX = Infinity, minScreenY = Infinity, maxScreenX = -Infinity, maxScreenY = -Infinity;
+            
+            l.forEach(p => {
+                // Same logic as getMirroredPoint for X (Mirror) and Y
+                // Note: Click logic expects "Right is Left" due to mirror view? 
+                // In getMirroredPoint: x = (1 - l.x) * w + offX.
+                // This gives pixel coords.
+                const px = (1 - p.x) * w + offX;
+                const py = p.y * h + offY;
+                
+                if(px < minScreenX) minScreenX = px;
+                if(px > maxScreenX) maxScreenX = px;
+                if(py < minScreenY) minScreenY = py;
+                if(py > maxScreenY) maxScreenY = py;
+            });
+            
+            // Convert pixels back to normalized 0-1 relative to canvas size
+            const canvasW = canvasElement.width;
+            const canvasH = canvasElement.height;
+            
+            // Note: Click Logic (normX) logic was: 1 - ((e.clientX...) / width).
+            // That logic assumes the click X is also "mirrored" relative to screen.
+            // If I tap Left side of screen (small clientX), normX is ~1.0.
+            // If I tap Right side (large clientX), normX is ~0.0.
+            
+            // My getMirroredPoint logic puts right-side-of-face (small l.x) at Right Side of Screen (Large Pixel X).
+            // So a Large Pixel X should correspond to a Small normX?
+            
+            // Let's align: 
+            // Pixel X = 1000 (Right side). 
+            // normX in click handler = 1 - (1000/1280) = 0.2.
+            
+            // So we need to normalize the pixel bounding box to 0-1, then Flip X?
+            // Actually, let's just return the Normalized Screen Coordinates (0-1, Left-to-Right).
+            // And fix the click handler to match.
+            
+            // Bounding Box in standard 0-1 (Left is Left)
+            return {
+                minX: 1 - (maxScreenX / canvasW), // Flip! Max Pixel X is Left side in mirrored normX?
+                maxX: 1 - (minScreenX / canvasW),
+                minY: minScreenY / canvasH,
+                maxY: maxScreenY / canvasH
+            };
+        }
+        
+        function drawDebugMarkers(ctx, l, w, h, offX, offY) { 
+            ctx.save(); 
+            // We are already in a context that is translated/mirrored for the video draw?
+            // No, onResults restores context after drawing video.
+            // So we are in standard 0,0 top-left context.
+            // But getMirroredPoint returns coordinates for standard 0,0 top-left drawing (it handles the mirror math manually).
+            // So we just draw at the points.
+            
+            [10,168,1,152].forEach(id=>{
+                const p = getMirroredPoint(l[id], w, h, offX, offY); 
+                // scale coordinates down if drawing on high-dpi canvas via CSS pixels?
+                // ctx is high-res. p is high-res.
+                ctx.beginPath(); 
+                ctx.arc(p.x, p.y, 4, 0, 2*Math.PI); 
+                ctx.fillStyle='red'; 
+                ctx.fill();
+            }); 
+            ctx.restore(); 
+        }
+        
         function activateControls(idx) { selectedFaceIndex=idx; selectedPartIndex=0; document.getElementById('prop-controls').style.opacity='1'; document.getElementById('prop-controls').style.pointerEvents='auto'; refreshControlsUI(); }
         function refreshControlsUI() {
             const f = FILTERS[faceAssignments.get(selectedFaceIndex)], p = f.parts[selectedPartIndex];
