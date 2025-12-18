@@ -734,7 +734,8 @@
             try {
                 if (typeof FaceMesh === 'undefined') throw new Error("MediaPipe failed to load.");
                 const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
-                faceMesh.setOptions({maxNumFaces: 4, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+                // BUMPED MAX FACES TO 7 (Matches total filter count)
+                faceMesh.setOptions({maxNumFaces: 7, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
                 faceMesh.onResults(onResults);
                 await loadAssets();
                 
