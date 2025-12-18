@@ -554,12 +554,21 @@
         // Elements - Declarations
         let videoElement, canvasElement, stickerLayer, ctx, loadingDiv;
         
+        // FIX: Sync container height to actual viewport (fixes mobile 100vh issue)
+        // On mobile, 100vh includes area behind address bar, but window.innerHeight is the visible area
+        function syncContainerHeight() {
+            const vh = window.innerHeight;
+            document.getElementById('scene-container').style.height = vh + 'px';
+            document.getElementById('app-container').style.height = vh + 'px';
+        }
+        
         // Landing Page Logic
         function enterApp() {
             document.getElementById('landing-page').style.opacity = 0;
             setTimeout(() => { 
                 document.getElementById('landing-page').style.display = 'none'; 
                 document.getElementById('app-container').style.display = 'block';
+                syncContainerHeight(); // FIX: Set correct height immediately
                 startCamera();
             }, 500);
         }
@@ -611,6 +620,9 @@
         function onResults(results) {
             if (loadingDiv) loadingDiv.style.display = 'none'; 
             if (!canvasElement) return;
+
+            // FIX: Keep container height synced with actual viewport on every frame
+            syncContainerHeight();
 
             // 1. Set Canvas to EXACT Window Size (Logical Pixels)
             // This aligns coordinate systems and fixes the "Tiny" issue on Retina
@@ -850,7 +862,7 @@
         resizeGraphics();
         initSnow();
         requestAnimationFrame(updateGraphics);
-        window.addEventListener('resize', () => { resizeGraphics(); initSnow(); });
+        window.addEventListener('resize', () => { resizeGraphics(); initSnow(); syncContainerHeight(); });
 
         // Debug Helpers
         function toggleDebug() { debugMode = !debugMode; document.getElementById('btn-debug').classList.toggle('active', debugMode); if(!debugMode) selectedFaceIndex=-1; }
