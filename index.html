@@ -140,10 +140,9 @@
             width: 100vw;
             height: 100vh;
             overflow: hidden;
-            /* Transparent BG */
+            /* Background transparent so WebGL shows through when video is hidden */
             background: transparent; 
-            /* REMOVED PERSPECTIVE TO FIX MOBILE FLOATING ISSUE - ORTHOGRAPHIC MODE */
-            perspective: none; 
+            perspective: 800px; 
             transform: translateZ(0);
         }
 
@@ -159,14 +158,12 @@
             left: 0; top: 0;
             width: 100%; height: 100%;
             pointer-events: none;
-            /* Disable inherited perspective */
-            transform-style: flat;
+            transform-style: preserve-3d;
         }
 
         .sticker {
             position: absolute;
             top: 0; left: 0;
-            /* We still use 3D transforms for rotation, but in a flat container context */
             transform-style: preserve-3d;
             will-change: transform;
             transform-origin: 0 0; 
@@ -252,8 +249,6 @@
         input[type=range] { width: 100px; accent-color: #00ff88; }
         label { font-size: 11px; color: #ccc; font-weight: 500; font-family: system-ui; }
         button.debug-btn { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
-        /* Added active state for debug button feedback */
-        button.debug-btn.active { background: #00ff88; color: black; border-color: #00ff88; }
         .part-nav { display: flex; gap: 5px; align-items: center; }
 
         @media (max-width: 600px) {
@@ -305,8 +300,7 @@
                 <div class="control-header">
                     <span style="font-weight:bold; color:#00ff88; font-size:14px; font-family:system-ui;">Designer Mode</span>
                     <div style="display:flex; gap:5px;">
-                        <!-- Fixed ID: Added id="btn-debug" -->
-                        <button class="debug-btn" id="btn-debug" onclick="toggleDebug()">Debug</button>
+                        <button class="debug-btn" onclick="toggleDebug()">Debug</button>
                         <button class="debug-btn" onclick="toggleUI()" id="btn-min">_</button>
                     </div>
                 </div>
@@ -367,7 +361,6 @@
         precision mediump float;
         uniform vec2 u_resolution;
         uniform float u_time;
-        // Simplex 3D Noise (Compact)
         vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
         vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
         vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
@@ -602,7 +595,7 @@
         }
 
         function getStickerElement(faceId, partId, src, type, zIndex) {
-            if (!stickerLayer) return null; // Guard
+            if (!stickerLayer) return null; 
             const id = `sticker-${faceId}-${partId}`;
             let el = document.getElementById(id);
             if (!el) {
@@ -616,7 +609,7 @@
         }
 
         function onResults(results) {
-            if (loadingDiv) loadingDiv.style.display = 'none'; // Guard check
+            if (loadingDiv) loadingDiv.style.display = 'none'; 
             if (!canvasElement) return;
 
             // 1. Set Canvas to EXACT Window Size (Logical Pixels)
@@ -657,19 +650,16 @@
                     if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
                     const filter = FILTERS[faceAssignments.get(idx)];
 
-                    // --- KEY CHANGE: Calculate Target Width relative to SCALED video size ---
+                    // Calculate Un-Projected Width to stop shrinking on rotation
                     const targetWidthRaw = Math.abs(landmarks[454].x - landmarks[234].x) * scaledW;
                     
-                    // --- KEY CHANGE: Un-projected Width Calculation (Cosine Compensation) ---
                     // 1. Get raw orientation 
                     const matrixBasis = calculateFaceMatrix(landmarks, scaledW, scaledH, offX, offY);
                     
-                    // 2. Extract Yaw (Rotation around Y axis) from basis vector Z
-                    // atan2(-z.x, z.z)
+                    // 2. Extract Yaw
                     const yaw = Math.atan2(-matrixBasis.z.x, matrixBasis.z.z);
                     
                     // 3. Compensate for foreshortening
-                    // Cosine approaches 0 at 90deg, so clamp it to avoid explosion
                     const cosYaw = Math.max(Math.abs(Math.cos(yaw)), 0.2); 
                     const unprojectedWidth = targetWidthRaw / cosYaw;
 
@@ -700,39 +690,27 @@
                         // CSS Scale is 1:1 now
                         const cssScale = 1; 
                         
-                        const logicalFaceWidth = state.w; // Use the COMPENSATED width here
+                        const logicalFaceWidth = state.w; 
                         const depthScale = logicalFaceWidth / REFERENCE_FACE_WIDTH;
                         
                         const X = state.basis.x, Y = state.basis.y, Z = state.basis.z;
                         const rotationMatrix = `matrix3d(${f(X.x)},${f(X.y)},${f(X.z)},0,${f(Y.x)},${f(Y.y)},${f(Y.z)},0,${f(Z.x)},${f(Z.y)},${f(Z.z)},0,0,0,0,1)`;
                         
-                        // --- UPDATED LIVE VIEW TRANSFORM LOGIC (Matches Snapshot Logic) ---
-                        // 1. Calculate the scaled offsets (Renamed to avoid TDZ collision)
-                        const stickerOffX = (part.offsetX || 0) * depthScale;
-                        const stickerOffY = (part.offsetY || 0) * depthScale;
-                        const stickerOffZ = (part.offsetZ || 20) * depthScale;
-                        
-                        // 2. Add offsets directly to the anchor (moves the pivot point)
-                        const finalX = smoothAnchor.x + stickerOffX;
-                        const finalY = smoothAnchor.y + stickerOffY;
-                        
-                        // 3. Apply Transform
                         el.style.transform = `
-                            translate3d(${f(finalX)}px, ${f(finalY)}px, ${f(smoothAnchor.z)}px)
+                            translate3d(${f(smoothAnchor.x)}px, ${f(smoothAnchor.y)}px, ${f(smoothAnchor.z)}px)
                             ${rotationMatrix}
-                            translateZ(${stickerOffZ}px)
+                            translateZ(${(part.offsetZ||20)*depthScale}px)
                             rotateX(${part.rotationX||0}deg) rotateY(${part.rotationY||0}deg) rotateZ(${part.rotation||0}deg)
+                            translate(${(part.offsetX||0)*depthScale}px, ${(part.offsetY||0)*depthScale}px)
                             translate(-50%, -50%)
                         `;
-                        
                         const size = state.w * part.scale;
                         el.style.width = `${size}px`; el.style.height = "auto";
                         el.style.filter = (debugMode && selectedFaceIndex===idx && selectedPartIndex===partIdx) ? "drop-shadow(0 0 10px #00ff88) brightness(1.2)" : "none";
                         el.style.display = 'block';
 
-                        // Calculate Simple 2D Rotation for Snapshot (Roll)
                         const simpleRoll = Math.atan2(X.y, X.x) + ((part.rotation||0) * Math.PI/180);
-                        faceParts.push({ id: part.id, type: part.type, src: part.src, x: finalX, y: finalY, scale: size, rotation: simpleRoll, zIndex: part.zIndex });
+                        faceParts.push({ id: part.id, type: part.type, src: part.src, x: smoothAnchor.x + (part.offsetX||0)*depthScale, y: smoothAnchor.y + (part.offsetY||0)*depthScale, scale: size, rotation: simpleRoll, zIndex: part.zIndex });
                     });
                     activeFaceData.push(faceParts);
                     
@@ -756,6 +734,7 @@
             try {
                 if (typeof FaceMesh === 'undefined') throw new Error("MediaPipe failed to load.");
                 const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+                // BUMPED MAX FACES TO 7 (Matches total filter count)
                 faceMesh.setOptions({maxNumFaces: 7, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
                 faceMesh.onResults(onResults);
                 await loadAssets();
