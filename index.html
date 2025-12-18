@@ -211,12 +211,12 @@
         /* Result Modal */
         #result-modal {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            /* Transparent to show WebGL background */
-            background: transparent;
+            /* Semi-transparent velvet dark to see the snow behind */
+            background: rgba(20, 5, 5, 0.85); 
             z-index: 80;
             display: none; flex-direction: column; align-items: center; justify-content: center;
             pointer-events: auto;
-            backdrop-filter: blur(0px); /* Removed blur to keep BG sharp */
+            backdrop-filter: blur(5px);
         }
         #result-img {
             max-width: 90%; max-height: 55%;
@@ -249,6 +249,8 @@
         input[type=range] { width: 100px; accent-color: #00ff88; }
         label { font-size: 11px; color: #ccc; font-weight: 500; font-family: system-ui; }
         button.debug-btn { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+        /* Added active state for debug button feedback */
+        button.debug-btn.active { background: #00ff88; color: black; border-color: #00ff88; }
         .part-nav { display: flex; gap: 5px; align-items: center; }
 
         @media (max-width: 600px) {
@@ -300,7 +302,8 @@
                 <div class="control-header">
                     <span style="font-weight:bold; color:#00ff88; font-size:14px; font-family:system-ui;">Designer Mode</span>
                     <div style="display:flex; gap:5px;">
-                        <button class="debug-btn" onclick="toggleDebug()">Debug</button>
+                        <!-- Fixed ID: Added id="btn-debug" -->
+                        <button class="debug-btn" id="btn-debug" onclick="toggleDebug()">Debug</button>
                         <button class="debug-btn" onclick="toggleUI()" id="btn-min">_</button>
                     </div>
                 </div>
@@ -361,6 +364,7 @@
         precision mediump float;
         uniform vec2 u_resolution;
         uniform float u_time;
+        // Simplex 3D Noise (Compact)
         vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
         vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
         vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
@@ -570,7 +574,7 @@
         function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
         function normalize(v) { const mag = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) || 1; return { x: v.x/mag, y: v.y/mag, z: v.z/mag }; }
         
-        // SIMPLIFIED MAPPING: Map 0-1 video coords to screen pixels directly (No DPR complexity)
+        // --- RESTORED: Map 0-1 video coords to screen pixels directly with offsets (No DPR complexity)
         function getMirroredPoint(l, w, h, offX = 0, offY = 0) { 
             return { 
                 x: (1 - l.x) * w + offX, 
@@ -595,7 +599,7 @@
         }
 
         function getStickerElement(faceId, partId, src, type, zIndex) {
-            if (!stickerLayer) return null; 
+            if (!stickerLayer) return null; // Guard
             const id = `sticker-${faceId}-${partId}`;
             let el = document.getElementById(id);
             if (!el) {
@@ -609,7 +613,7 @@
         }
 
         function onResults(results) {
-            if (loadingDiv) loadingDiv.style.display = 'none'; 
+            if (loadingDiv) loadingDiv.style.display = 'none'; // Guard check
             if (!canvasElement) return;
 
             // 1. Set Canvas to EXACT Window Size (Logical Pixels)
@@ -650,16 +654,19 @@
                     if (!faceAssignments.has(idx)) faceAssignments.set(idx, idx % FILTERS.length);
                     const filter = FILTERS[faceAssignments.get(idx)];
 
-                    // Calculate Un-Projected Width to stop shrinking on rotation
+                    // --- KEY CHANGE: Calculate Target Width relative to SCALED video size ---
                     const targetWidthRaw = Math.abs(landmarks[454].x - landmarks[234].x) * scaledW;
                     
+                    // --- KEY CHANGE: Un-projected Width Calculation (Cosine Compensation) ---
                     // 1. Get raw orientation 
                     const matrixBasis = calculateFaceMatrix(landmarks, scaledW, scaledH, offX, offY);
                     
-                    // 2. Extract Yaw
+                    // 2. Extract Yaw (Rotation around Y axis) from basis vector Z
+                    // atan2(-z.x, z.z)
                     const yaw = Math.atan2(-matrixBasis.z.x, matrixBasis.z.z);
                     
                     // 3. Compensate for foreshortening
+                    // Cosine approaches 0 at 90deg, so clamp it to avoid explosion
                     const cosYaw = Math.max(Math.abs(Math.cos(yaw)), 0.2); 
                     const unprojectedWidth = targetWidthRaw / cosYaw;
 
@@ -690,7 +697,7 @@
                         // CSS Scale is 1:1 now
                         const cssScale = 1; 
                         
-                        const logicalFaceWidth = state.w; 
+                        const logicalFaceWidth = state.w; // Use the COMPENSATED width here
                         const depthScale = logicalFaceWidth / REFERENCE_FACE_WIDTH;
                         
                         const X = state.basis.x, Y = state.basis.y, Z = state.basis.z;
@@ -709,6 +716,7 @@
                         el.style.filter = (debugMode && selectedFaceIndex===idx && selectedPartIndex===partIdx) ? "drop-shadow(0 0 10px #00ff88) brightness(1.2)" : "none";
                         el.style.display = 'block';
 
+                        // Calculate Simple 2D Rotation for Snapshot (Roll)
                         const simpleRoll = Math.atan2(X.y, X.x) + ((part.rotation||0) * Math.PI/180);
                         faceParts.push({ id: part.id, type: part.type, src: part.src, x: smoothAnchor.x + (part.offsetX||0)*depthScale, y: smoothAnchor.y + (part.offsetY||0)*depthScale, scale: size, rotation: simpleRoll, zIndex: part.zIndex });
                     });
@@ -734,7 +742,6 @@
             try {
                 if (typeof FaceMesh === 'undefined') throw new Error("MediaPipe failed to load.");
                 const faceMesh = new FaceMesh({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
-                // BUMPED MAX FACES TO 7 (Matches total filter count)
                 faceMesh.setOptions({maxNumFaces: 7, refineLandmarks: true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
                 faceMesh.onResults(onResults);
                 await loadAssets();
