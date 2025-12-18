@@ -517,6 +517,13 @@
         const CLOUDINARY_CONFIG = { cloudName: "dh85g5yyh", uploadPreset: "fitzmas-photobooth" };
         const SMOOTHING = 0.2; 
         const REFERENCE_FACE_WIDTH = 300; 
+        const MISSING_PLACEHOLDER_BG = '#c0392b';
+        const MISSING_PLACEHOLDER_TEXT = '#fff7d6';
+
+        function buildMissingPlaceholder(id) {
+            const svg = `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320" role="img" aria-label="Missing ${id}"><rect width="320" height="320" rx="32" ry="32" fill="${MISSING_PLACEHOLDER_BG}"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="'Henny Penny', system-ui" font-size="48" fill="${MISSING_PLACEHOLDER_TEXT}">${id}</text></svg>`;
+            return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+        }
 
         // Filter Definitions
         const FILTERS = [
@@ -613,7 +620,12 @@
             let el = document.getElementById(id);
             if (!el) {
                 el = document.createElement(type === 'image' ? 'img' : 'div');
-                if(type === 'image') el.src = src; else { el.innerText = src; el.style.fontSize = "50px"; }
+                if(type === 'image') {
+                    el.src = src;
+                    el.onerror = () => { el.onerror = null; el.src = buildMissingPlaceholder(partId); };
+                } else { 
+                    el.innerText = src; el.style.fontSize = "50px"; 
+                }
                 el.id = id; el.className = 'sticker'; el.style.zIndex = zIndex; 
                 stickerLayer.appendChild(el);
             }
@@ -770,7 +782,14 @@
             FILTERS.forEach(f => f.parts.forEach(p => {
                 if(p.type==='image'){
                     const img = new Image(); img.crossOrigin="Anonymous"; img.src=p.src;
-                    promises.push(new Promise(r => { img.onload=()=>{loadedImages[p.id]=img;r();}; img.onerror=()=>{console.warn("Fail:",p.id);r();}; setTimeout(r,3000); }));
+                    const fallbackSrc = buildMissingPlaceholder(p.id);
+                    promises.push(new Promise(r => {
+                        let settled = false;
+                        const resolveOnce = () => { if (settled) return; settled = true; loadedImages[p.id]=img; r(); };
+                        img.onload = resolveOnce;
+                        img.onerror = () => { console.warn("Missing or failed to load:", p.id, "-> using placeholder"); img.src = fallbackSrc; };
+                        setTimeout(resolveOnce, 3000);
+                    }));
                 }
             }));
             return Promise.all(promises);
