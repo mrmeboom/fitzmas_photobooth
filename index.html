@@ -140,9 +140,10 @@
             width: 100vw;
             height: 100vh;
             overflow: hidden;
-            /* Background transparent so WebGL shows through when video is hidden */
+            /* Transparent BG */
             background: transparent; 
-            perspective: 800px; 
+            /* REMOVED PERSPECTIVE TO FIX MOBILE FLOATING ISSUE */
+            /* perspective: 800px; */
             transform: translateZ(0);
         }
 
@@ -574,7 +575,7 @@
         function cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
         function normalize(v) { const mag = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) || 1; return { x: v.x/mag, y: v.y/mag, z: v.z/mag }; }
         
-        // --- RESTORED: Map 0-1 video coords to screen pixels directly with offsets (No DPR complexity)
+        // SIMPLIFIED MAPPING: Map 0-1 video coords to screen pixels directly (No DPR complexity)
         function getMirroredPoint(l, w, h, offX = 0, offY = 0) { 
             return { 
                 x: (1 - l.x) * w + offX, 
