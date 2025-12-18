@@ -707,20 +707,20 @@
                         const rotationMatrix = `matrix3d(${f(X.x)},${f(X.y)},${f(X.z)},0,${f(Y.x)},${f(Y.y)},${f(Y.z)},0,${f(Z.x)},${f(Z.y)},${f(Z.z)},0,0,0,0,1)`;
                         
                         // --- UPDATED LIVE VIEW TRANSFORM LOGIC (Matches Snapshot Logic) ---
-                        // 1. Calculate the scaled offsets
-                        const offX = (part.offsetX || 0) * depthScale;
-                        const offY = (part.offsetY || 0) * depthScale;
-                        const offZ = (part.offsetZ || 20) * depthScale;
+                        // 1. Calculate the scaled offsets (Renamed to avoid TDZ collision)
+                        const stickerOffX = (part.offsetX || 0) * depthScale;
+                        const stickerOffY = (part.offsetY || 0) * depthScale;
+                        const stickerOffZ = (part.offsetZ || 20) * depthScale;
                         
                         // 2. Add offsets directly to the anchor (moves the pivot point)
-                        const finalX = smoothAnchor.x + offX;
-                        const finalY = smoothAnchor.y + offY;
+                        const finalX = smoothAnchor.x + stickerOffX;
+                        const finalY = smoothAnchor.y + stickerOffY;
                         
                         // 3. Apply Transform
                         el.style.transform = `
                             translate3d(${f(finalX)}px, ${f(finalY)}px, ${f(smoothAnchor.z)}px)
                             ${rotationMatrix}
-                            translateZ(${offZ}px)
+                            translateZ(${stickerOffZ}px)
                             rotateX(${part.rotationX||0}deg) rotateY(${part.rotationY||0}deg) rotateZ(${part.rotation||0}deg)
                             translate(-50%, -50%)
                         `;
@@ -899,21 +899,55 @@
         });
 
         // Debug UI Updaters
+        // UPDATED: Now accepts scaled dims and offsets
         function getBoundingBox(l, w, h, offX, offY) { 
             let minX=1, minY=1, maxX=0, maxY=0; 
+            // Loop through all landmarks to find bounding box in 0-1 space (video space)
+            // But we need to map to 0-1 Screen Space for click detection
+            // Video Space (0-1) -> Screen Pixel Space (via getMirroredPoint logic) -> Screen Normalized (0-1)
+            
+            // Wait, click detection is normalized 0-1 of the SCREEN.
+            // We need to convert landmarks to Screen Pixels first.
+            
             let minScreenX = Infinity, minScreenY = Infinity, maxScreenX = -Infinity, maxScreenY = -Infinity;
+            
             l.forEach(p => {
+                // Same logic as getMirroredPoint for X (Mirror) and Y
+                // Note: Click logic expects "Right is Left" due to mirror view? 
+                // In getMirroredPoint: x = (1 - l.x) * w + offX.
+                // This gives pixel coords.
                 const px = (1 - p.x) * w + offX;
                 const py = p.y * h + offY;
+                
                 if(px < minScreenX) minScreenX = px;
                 if(px > maxScreenX) maxScreenX = px;
                 if(py < minScreenY) minScreenY = py;
                 if(py > maxScreenY) maxScreenY = py;
             });
+            
+            // Convert pixels back to normalized 0-1 relative to canvas size
             const canvasW = canvasElement.width;
             const canvasH = canvasElement.height;
+            
+            // Note: Click Logic (normX) logic was: 1 - ((e.clientX...) / width).
+            // That logic assumes the click X is also "mirrored" relative to screen.
+            // If I tap Left side of screen (small clientX), normX is ~1.0.
+            // If I tap Right side (large clientX), normX is ~0.0.
+            
+            // My getMirroredPoint logic puts right-side-of-face (small l.x) at Right Side of Screen (Large Pixel X).
+            // So a Large Pixel X should correspond to a Small normX?
+            
+            // Let's align: 
+            // Pixel X = 1000 (Right side). 
+            // normX in click handler = 1 - (1000/1280) = 0.2.
+            
+            // So we need to normalize the pixel bounding box to 0-1, then Flip X?
+            // Actually, let's just return the Normalized Screen Coordinates (0-1, Left-to-Right).
+            // And fix the click handler to match.
+            
+            // Bounding Box in standard 0-1 (Left is Left)
             return {
-                minX: 1 - (maxScreenX / canvasW), 
+                minX: 1 - (maxScreenX / canvasW), // Flip! Max Pixel X is Left side in mirrored normX?
                 maxX: 1 - (minScreenX / canvasW),
                 minY: minScreenY / canvasH,
                 maxY: maxScreenY / canvasH
@@ -922,8 +956,16 @@
         
         function drawDebugMarkers(ctx, l, w, h, offX, offY) { 
             ctx.save(); 
+            // We are already in a context that is translated/mirrored for the video draw?
+            // No, onResults restores context after drawing video.
+            // So we are in standard 0,0 top-left context.
+            // But getMirroredPoint returns coordinates for standard 0,0 top-left drawing (it handles the mirror math manually).
+            // So we just draw at the points.
+            
             [10,168,1,152].forEach(id=>{
                 const p = getMirroredPoint(l[id], w, h, offX, offY); 
+                // scale coordinates down if drawing on high-dpi canvas via CSS pixels?
+                // ctx is high-res. p is high-res.
                 ctx.beginPath(); 
                 ctx.arc(p.x, p.y, 4, 0, 2*Math.PI); 
                 ctx.fillStyle='red'; 
